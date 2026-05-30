@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CEDI Intelligence — Harvin Distribuciones</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="src/styles/main.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-logo">
+        <span class="logo-icon">◈</span>
+        <div>
+          <div class="logo-title">CEDI Intelligence</div>
+          <div class="logo-sub">Harvin Distribuciones</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-page="dashboard">
+          <span class="nav-icon">⬡</span> Dashboard
+        </button>
+        <button class="nav-item" data-page="compra">
+          <span class="nav-icon">⟁</span> Compra Inteligente
+        </button>
+        <button class="nav-item" data-page="abc">
+          <span class="nav-icon">◎</span> Análisis ABC
+        </button>
+        <button class="nav-item" data-page="clientes">
+          <span class="nav-icon">◉</span> Clientes Ancla
+        </button>
+        <button class="nav-item" data-page="inventario">
+          <span class="nav-icon">⬜</span> Inventario
+        </button>
+        <button class="nav-item" data-page="exportar">
+          <span class="nav-icon">↗</span> Exportar
+        </button>
+        <button class="nav-item" data-page="actualizar">
+          <span class="nav-icon">⟳</span> Actualizar Datos
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-period" id="sidebar-periodo">Período: —</div>
+        <div class="sidebar-period" id="sidebar-corte">Corte: —</div>
+      </div>
+    </aside>
+
+    <main id="main-content">
+      <div id="page-dashboard" class="page active"></div>
+      <div id="page-compra" class="page"></div>
+      <div id="page-abc" class="page"></div>
+      <div id="page-clientes" class="page"></div>
+      <div id="page-inventario" class="page"></div>
+      <div id="page-exportar" class="page"></div>
+      <div id="page-actualizar" class="page"></div>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="src/data/cedi_data.js"></script>
+  <script src="src/utils/calculations.js"></script>
+  <script src="src/utils/formatters.js"></script>
+  <script src="src/utils/dataProcessor.js"></script>
+  <script src="src/components/dashboard.js"></script>
+  <script src="src/components/compra.js"></script>
+  <script src="src/components/abc.js"></script>
+  <script src="src/components/clientes.js"></script>
+  <script src="src/components/inventario.js"></script>
+  <script src="src/components/exportar.js"></script>
+  <script src="src/components/actualizar.js"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>
