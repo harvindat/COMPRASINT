@@ -194,7 +194,7 @@ window.PageClientes = (function() {
 
     const rows = slice.map(a => {
       const pctAncla = Math.round((a.pct_ancla || 0) * 100);
-      const barColor = pctAncla >= 70 ? '#C8A84B' : pctAncla >= 40 ? '#1D9E75' : '#888780';
+      const barColor = pctAncla >= 70 ? '#E11D2A' : pctAncla >= 40 ? '#1D9E75' : '#888780';
       return `
         <tr>
           <td class="clave">${a.clave}</td>
@@ -257,7 +257,7 @@ window.PageClientes = (function() {
         datasets: [{
           data: top8.map(c => c.venta),
           backgroundColor: colors,
-          borderWidth: 2, borderColor: '#FFFFFF'
+          borderWidth: 2, borderColor: '#141418'
         }]
       },
       options: {

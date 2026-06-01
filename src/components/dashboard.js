@@ -196,13 +196,13 @@ window.PageDashboard = (function() {
         type: 'bar',
         data: {
           labels: compras_mes.map(m => m.mes),
-          datasets: [{ label: 'Compras', data: compras_mes.map(m => m.total), backgroundColor: '#C8A84B', borderRadius: 4 }]
+          datasets: [{ label: 'Compras', data: compras_mes.map(m => m.total), backgroundColor: '#E11D2A', borderRadius: 4 }]
         },
         options: {
           responsive: true, maintainAspectRatio: false,
           plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => '$' + ctx.parsed.y.toLocaleString('es-MX') } } },
           scales: {
-            y: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'K', font: { size: 10 } }, grid: { color: '#EEECEA' } },
+            y: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'K', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
             x: { ticks: { font: { size: 11 } }, grid: { display: false } }
           }
         }
@@ -224,7 +224,7 @@ window.PageDashboard = (function() {
           responsive: true, maintainAspectRatio: false,
           plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => '$' + ctx.parsed.x.toLocaleString('es-MX') } } },
           scales: {
-            x: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'K', font: { size: 10 } }, grid: { color: '#EEECEA' } },
+            x: { ticks: { callback: v => '$' + (v/1000).toFixed(0) + 'K', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.06)' } },
             y: { ticks: { font: { size: 10 } }, grid: { display: false } }
           }
         }
@@ -242,7 +242,7 @@ window.PageDashboard = (function() {
           datasets: [{
             data: abcActivos.map(x => x.arts),
             backgroundColor: ['#1D9E75', '#378ADD', '#EF9F27'],
-            borderWidth: 2, borderColor: '#FFFFFF'
+            borderWidth: 2, borderColor: '#141418'
           }]
         },
         options: {

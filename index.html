@@ -13,7 +13,7 @@
   <div id="app">
     <aside id="sidebar">
       <div class="sidebar-logo">
-        <span class="logo-icon">◈</span>
+        <img class="brand-logo" src="src/assets/harvin-logo.png" alt="Harvin Distribuciones — FE-1517" />
         <div>
           <div class="logo-title">CEDI Intelligence</div>
           <div class="logo-sub">Harvin Distribuciones</div>
@@ -42,6 +42,7 @@
           <span class="nav-icon">⟳</span> Actualizar Datos
         </button>
       </nav>
+      <div class="user-box" id="user-box"></div>
       <div class="sidebar-footer">
         <div class="sidebar-period" id="sidebar-periodo">Período: —</div>
         <div class="sidebar-period" id="sidebar-corte">Corte: —</div>
@@ -62,6 +63,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="src/data/cedi_data.js"></script>
+  <script src="src/utils/auth.js"></script>
   <script src="src/utils/calculations.js"></script>
   <script src="src/utils/formatters.js"></script>
   <script src="src/utils/dataProcessor.js"></script>

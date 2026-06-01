@@ -207,7 +207,7 @@ window.PageABC = (function() {
           datasets: [{
             data: abcActivos.map(x => x.venta),
             backgroundColor: ['#1D9E75','#378ADD','#EF9F27'],
-            borderWidth: 2, borderColor: '#FFFFFF'
+            borderWidth: 2, borderColor: '#141418'
           }]
         },
         options: {

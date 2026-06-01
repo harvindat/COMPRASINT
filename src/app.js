@@ -18,6 +18,23 @@
 
   let currentPage = null;
 
+  function lockedPanelHTML(pageId, loggedIn) {
+    var label = (pageId === 'compra') ? 'Compra Inteligente' : (pageId === 'actualizar' ? 'Actualizar Datos' : 'esta sección');
+    if (!loggedIn) {
+      return '<div class="locked-panel">' +
+        '<div class="lp-icon">🔒</div>' +
+        '<div class="lp-title">Acceso restringido</div>' +
+        '<div class="lp-text">Para usar <strong>' + label + '</strong> necesitas iniciar sesión con una cuenta autorizada.</div>' +
+        '<button class="btn btn-primary" onclick="window.AuthUI.openLogin(\'' + pageId + '\')">Iniciar sesión</button>' +
+        '</div>';
+    }
+    return '<div class="locked-panel">' +
+      '<div class="lp-icon">⛔</div>' +
+      '<div class="lp-title">Sin permiso</div>' +
+      '<div class="lp-text">Tu cuenta no tiene permiso para acceder a <strong>' + label + '</strong>. Contacta al administrador.</div>' +
+      '</div>';
+  }
+
   function navigate(pageId) {
     if (!pages[pageId]) return;
 
@@ -39,6 +56,14 @@
 
     currentPage = pageId;
 
+    // ---- Control de acceso (Compra Inteligente / Actualizar Datos) ----
+    if (window.Auth && !window.Auth.can(pageId)) {
+      var loggedIn = window.Auth.isLoggedIn();
+      if (pageEl) pageEl.innerHTML = lockedPanelHTML(pageId, loggedIn);
+      if (!loggedIn && window.AuthUI) window.AuthUI.openLogin(pageId);
+      return;
+    }
+
     // Render the page
     if (pages[pageId] && pages[pageId].render) {
       try {
@@ -52,6 +77,15 @@
   }
 
   function init() {
+    // Defaults de Chart.js para tema oscuro (texto y rejilla legibles)
+    if (window.Chart) {
+      try {
+        Chart.defaults.color = '#A6A6AE';
+        Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+        Chart.defaults.font.family = "'DM Sans', sans-serif";
+      } catch (e) {}
+    }
+
     // Validate data loaded
     if (!window.CEDI_DATA) {
       document.getElementById('app').innerHTML = '<div style="padding:40px;font-family:sans-serif"><strong>Error:</strong> No se encontró el archivo de datos CEDI. Verifica que cedi_data.js esté en src/data/</div>';
@@ -71,6 +105,24 @@
       if (elP) elP.textContent = 'Período: ' + (meta.periodo || '—');
       if (elC) elC.textContent = 'Corte: ' + (meta.fecha_corte || '—');
     } catch (e) {}
+
+    // ---- Inicializar autenticación y control de acceso ----
+    if (window.Auth) {
+      window.Auth.init();
+      if (window.AuthUI) {
+        window.AuthUI.refreshAll();
+        window.Auth.onChange(function () {
+          window.AuthUI.refreshAll();
+          // Si estás en una página ahora bloqueada (p.ej. tras cerrar sesión), recarga la vista
+          if (currentPage && !window.Auth.can(currentPage)) {
+            navigate(currentPage);
+          } else if (currentPage && (currentPage === 'compra' || currentPage === 'actualizar')) {
+            // Al iniciar sesión estando en la página bloqueada, renderiza el contenido real
+            navigate(currentPage);
+          }
+        });
+      }
+    }
 
     // Nav click handlers
     document.querySelectorAll('.nav-item').forEach(btn => {
