@@ -32,7 +32,7 @@ window.Auth = (function () {
   var SESSION_KEY = 'harvin_session_v1';
 
   // Páginas que requieren estar autenticado
-  var GATED = ['compra', 'actualizar'];
+  var GATED = ['compra', 'actualizar', 'exportar'];
 
   // -------- Tabla de usuarios (hashes PBKDF2, sin texto plano) --------
   // perms: ['*'] = todo el sitio. De lo contrario, lista de páginas permitidas.
@@ -53,6 +53,16 @@ window.Auth = (function () {
       roleKey: 'operador',
       saltB64: 'unJBGCJ3kiR8owa4deuLvA==',
       hashB64: '8WP987gv2+vc2FS0Tp4nCpP7IHiIUfbp/Wkn6n3xXdg=',
+      perms: ['dashboard', 'compra', 'abc', 'clientes', 'inventario', 'exportar', 'actualizar']
+    },
+    cindy: {
+      username: 'cindy',
+      display: 'cindy',
+      role: 'Operador',
+      roleKey: 'operador',
+      saltB64: 'U8hxmaSNLWaOUdc7PZ8Cxg==',
+      hashB64: 'JrXODHuAMtsbCSjgSs5HfzvnuXvGVfXavzs52AsmunI=',
+      // Mismos permisos que daniel
       perms: ['dashboard', 'compra', 'abc', 'clientes', 'inventario', 'exportar', 'actualizar']
     }
   };
