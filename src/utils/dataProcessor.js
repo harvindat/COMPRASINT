@@ -420,12 +420,15 @@ window.DataProcessor = (function() {
   }
 
   /* ─── Generar archivo cedi_data.js descargable ────────── */
-  function generarArchivoJS(dataset) {
+  function generarContenidoJS(dataset) {
     const json = JSON.stringify(dataset);
-    const content = 'window.CEDI_DATA = ' + json + ';';
+    return 'window.CEDI_DATA = ' + json + ';';
+  }
+  function generarArchivoJS(dataset) {
+    const content = generarContenidoJS(dataset);
     const blob = new Blob([content], { type: 'application/javascript' });
     return blob;
   }
 
-  return { processFiles, buildDataset, generarArchivoJS, calcularPeriodo };
+  return { processFiles, buildDataset, generarArchivoJS, generarContenidoJS, calcularPeriodo };
 })();

@@ -19,7 +19,10 @@
   let currentPage = null;
 
   function lockedPanelHTML(pageId, loggedIn) {
-    var label = (pageId === 'compra') ? 'Compra Inteligente' : (pageId === 'actualizar' ? 'Actualizar Datos' : 'esta sección');
+    var label = (pageId === 'compra') ? 'Compra Inteligente'
+              : (pageId === 'actualizar') ? 'Actualizar Datos'
+              : (pageId === 'exportar') ? 'Exportar'
+              : 'esta sección';
     if (!loggedIn) {
       return '<div class="locked-panel">' +
         '<div class="lp-icon">🔒</div>' +
@@ -113,13 +116,9 @@
         window.AuthUI.refreshAll();
         window.Auth.onChange(function () {
           window.AuthUI.refreshAll();
-          // Si estás en una página ahora bloqueada (p.ej. tras cerrar sesión), recarga la vista
-          if (currentPage && !window.Auth.can(currentPage)) {
-            navigate(currentPage);
-          } else if (currentPage && (currentPage === 'compra' || currentPage === 'actualizar')) {
-            // Al iniciar sesión estando en la página bloqueada, renderiza el contenido real
-            navigate(currentPage);
-          }
+          // Re-renderiza la página actual para reflejar el nuevo estado de sesión
+          // (mostrar contenido al iniciar sesión o bloquear al cerrarla).
+          if (currentPage) navigate(currentPage);
         });
       }
     }

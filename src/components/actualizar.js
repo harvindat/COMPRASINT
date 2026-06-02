@@ -194,17 +194,21 @@ window.PageActualizar = (function() {
         <div class="card-title">Aplicar cambios</div>
         <div style="font-size:13px;color:var(--c-text2);line-height:1.6;margin-bottom:14px">
           <strong>Aplicar en sesión:</strong> actualiza el dashboard ahora mismo (temporal, hasta recargar la página).<br>
-          <strong>Descargar cedi_data.js:</strong> guarda el archivo para reemplazarlo en <code>src/data/</code> y dejar el cambio permanente en el proyecto.
+          <strong>Guardar en GitHub:</strong> hace commit del nuevo <code>cedi_data.js</code> directo al repositorio. Te pedirá tu token de GitHub (no se guarda en ningún lado).<br>
+          <strong>Descargar cedi_data.js:</strong> guarda el archivo para reemplazarlo manualmente en <code>src/data/</code>.
         </div>
         <div class="btn-row" style="margin-bottom:0">
           <button class="btn btn-green" id="btn-aplicar">✓ Aplicar en sesión</button>
-          <button class="btn btn-primary" id="btn-descargar-js">↓ Descargar cedi_data.js</button>
+          <button class="btn btn-primary" id="btn-guardar-github">⬆ Guardar en GitHub</button>
+          <button class="btn btn-outline" id="btn-descargar-js">↓ Descargar cedi_data.js</button>
         </div>
       </div>
     `;
 
     const btnAplicar = document.getElementById('btn-aplicar');
     if (btnAplicar) btnAplicar.addEventListener('click', aplicarSesion);
+    const btnGithub = document.getElementById('btn-guardar-github');
+    if (btnGithub) btnGithub.addEventListener('click', abrirModalGitHub);
     const btnDescargar = document.getElementById('btn-descargar-js');
     if (btnDescargar) btnDescargar.addEventListener('click', descargarJS);
   }
@@ -241,6 +245,107 @@ window.PageActualizar = (function() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  /* ─── Guardar en GitHub (token de un solo uso, nunca se almacena) ─── */
+  function abrirModalGitHub() {
+    if (!resultado) return;
+    const cfg = window.GitHubSync.getConfig();
+
+    let modal = document.getElementById('gh-modal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.className = 'auth-overlay open';
+    modal.id = 'gh-modal';
+    modal.innerHTML = `
+      <div class="auth-card" role="dialog" aria-modal="true" aria-label="Guardar en GitHub" style="max-width:420px">
+        <button class="auth-close" id="gh-close" aria-label="Cerrar">×</button>
+        <div class="auth-title">⬆ Guardar en GitHub</div>
+        <div class="auth-sub">${cfg.owner}/${cfg.repo} · ${cfg.branch} · ${cfg.path}</div>
+        <div class="auth-error" id="gh-error"></div>
+        <div id="gh-success" style="display:none"></div>
+        <div id="gh-form-wrap">
+          <div style="font-size:12px;color:var(--c-text2);line-height:1.6;margin-bottom:14px">
+            Pega tu <strong>Personal Access Token</strong> de GitHub. Se usa solo para este commit y
+            <strong>no se guarda</strong> en ningún lado. Usa un token <em>fine-grained</em> acotado a este
+            repositorio con permiso <span class="mono">Contents: Read and write</span>.
+          </div>
+          <div class="auth-field">
+            <label for="gh-token">Token de GitHub</label>
+            <div class="auth-pass-wrap">
+              <input id="gh-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_… o ghp_…" />
+              <button type="button" class="auth-pass-toggle" id="gh-token-toggle" aria-label="Mostrar/ocultar">Ver</button>
+            </div>
+          </div>
+          <div class="auth-field">
+            <label for="gh-msg">Mensaje de commit (opcional)</label>
+            <input id="gh-msg" type="text" value="Actualizar datos CEDI · ${resultado.meta.periodo}" />
+          </div>
+          <button class="btn btn-primary auth-submit" id="gh-submit">Guardar en el repositorio</button>
+        </div>
+        <div class="auth-foot">El token no se almacena. Desaparece al cerrar esta ventana o recargar.</div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const close = () => { try { modal.remove(); } catch (e) {} };
+    modal.querySelector('#gh-close').addEventListener('click', close);
+    modal.addEventListener('mousedown', e => { if (e.target === modal) close(); });
+
+    const tokenEl = modal.querySelector('#gh-token');
+    const toggle = modal.querySelector('#gh-token-toggle');
+    toggle.addEventListener('click', () => {
+      const t = tokenEl.type === 'password' ? 'text' : 'password';
+      tokenEl.type = t;
+      toggle.textContent = t === 'password' ? 'Ver' : 'Ocultar';
+    });
+
+    modal.querySelector('#gh-submit').addEventListener('click', () => guardarGitHub(modal));
+    tokenEl.addEventListener('keydown', e => { if (e.key === 'Enter') guardarGitHub(modal); });
+    setTimeout(() => tokenEl.focus(), 50);
+  }
+
+  function guardarGitHub(modal) {
+    const errEl = modal.querySelector('#gh-error');
+    const btn = modal.querySelector('#gh-submit');
+    let token = modal.querySelector('#gh-token').value;
+    const msg = modal.querySelector('#gh-msg').value;
+
+    errEl.classList.remove('show'); errEl.textContent = '';
+    if (!token || !token.trim()) {
+      errEl.textContent = 'Ingresa tu token de GitHub.';
+      errEl.classList.add('show');
+      return;
+    }
+
+    btn.disabled = true; btn.textContent = 'Guardando…';
+    const contenido = window.DataProcessor.generarContenidoJS(resultado);
+
+    window.GitHubSync.commit(token, contenido, msg).then(res => {
+      // Descartar el token de memoria local cuanto antes
+      token = null;
+      modal.querySelector('#gh-token').value = '';
+
+      if (res.ok) {
+        modal.querySelector('#gh-form-wrap').style.display = 'none';
+        const ok = modal.querySelector('#gh-success');
+        ok.style.display = 'block';
+        ok.innerHTML = `
+          <div style="text-align:center;padding:6px 0 4px">
+            <div style="font-size:40px;color:var(--c-green)">✓</div>
+            <div style="font-family:var(--font-display);font-size:18px;color:var(--c-text);margin-top:8px;font-weight:700">Guardado en GitHub</div>
+            <div style="font-size:12px;color:var(--c-text2);margin-top:8px;line-height:1.6">
+              El commit se aplicó al repositorio. GitHub Pages puede tardar 1–2 min en reflejar el cambio en el sitio.
+            </div>
+            ${res.commitUrl ? `<a href="${res.commitUrl}" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="margin-top:14px">Ver commit en GitHub →</a>` : ''}
+          </div>`;
+        // También aplicamos en sesión para ver el cambio sin esperar
+        aplicarSesion();
+      } else {
+        errEl.textContent = res.error || 'No se pudo guardar.';
+        errEl.classList.add('show');
+        btn.disabled = false; btn.textContent = 'Guardar en el repositorio';
+      }
+    });
   }
 
   return { render };
