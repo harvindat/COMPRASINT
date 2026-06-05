@@ -62,7 +62,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="src/data/cedi_data.js"></script>
   <script src="src/utils/auth.js"></script>
   <script src="src/utils/calculations.js"></script>
   <script src="src/utils/formatters.js"></script>
@@ -75,6 +74,7 @@
   <script src="src/components/inventario.js"></script>
   <script src="src/components/exportar.js"></script>
   <script src="src/components/actualizar.js"></script>
-  <script src="src/app.js"></script>
+  <!-- Bootstrap: carga cedi_data.js SIN caché (datos siempre frescos) y luego arranca app.js -->
+  <script src="src/bootstrap.js"></script>
 </body>
 </html>
