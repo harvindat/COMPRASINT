@@ -46,6 +46,11 @@ window.DataProcessor = (function() {
   function findCol(rows, textos, fallback, maxScan) {
     const lim = Math.min(maxScan || 8, rows.length);
     const want = textos.map(t => t.toLowerCase());
+    // Fase 1 — coincidencia EXACTA en cualquier fila. Los encabezados reales de
+    // estos reportes son exactos ("Existencia", "Último costo", "Rotación"),
+    // así que esto ubica la columna correcta sin chocar con las filas de TÍTULO
+    // ("Existencia y valor del inventario", "Rotación del inventario", …) que
+    // contienen el texto como substring.
     for (let i = 0; i < lim; i++) {
       const r = rows[i];
       if (!r) continue;
@@ -53,25 +58,64 @@ window.DataProcessor = (function() {
         const c = r[j];
         if (c == null) continue;
         const s = String(c).trim().toLowerCase();
-        if (want.some(w => s === w || s.indexOf(w) !== -1)) return j;
+        if (want.some(w => s === w)) return j;
+      }
+    }
+    // Fase 2 — substring, pero SOLO en filas de encabezado reales (3+ celdas no
+    // vacías). Las filas de título/subtítulo tienen texto solo en la columna 0,
+    // así que quedan excluidas. Esto conserva la tolerancia a que el ERP
+    // renombre o mueva columnas (p. ej. "Existencia final") sin volver a chocar
+    // con los títulos del reporte.
+    for (let i = 0; i < lim; i++) {
+      const r = rows[i];
+      if (!r) continue;
+      let noVacias = 0;
+      for (let j = 0; j < r.length; j++) {
+        if (r[j] != null && String(r[j]).trim() !== '') noVacias++;
+      }
+      if (noVacias < 3) continue;
+      for (let j = 0; j < r.length; j++) {
+        const c = r[j];
+        if (c == null) continue;
+        const s = String(c).trim().toLowerCase();
+        if (want.some(w => s.indexOf(w) !== -1)) return j;
       }
     }
     return fallback;
   }
 
   function parseFecha(v) {
-    // SheetJS puede devolver número serial Excel o string
+    // SheetJS puede devolver número serial Excel, objeto Date o string
     if (v == null) return null;
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
     if (typeof v === 'number') {
-      // Excel serial date → JS Date
-      const d = XLSX.SSF ? XLSX.SSF.parse_date_code(v) : null;
-      if (d) return new Date(d.y, d.m - 1, d.d);
+      // Excel serial date → JS Date. Usa SSF si está disponible; si no, conversión
+      // manual (epoch 1899-12-30; 25569 = días hasta 1970-01-01) para no depender
+      // de que el build de SheetJS incluya SSF.
+      if (XLSX && XLSX.SSF && XLSX.SSF.parse_date_code) {
+        const d = XLSX.SSF.parse_date_code(v);
+        if (d) return new Date(d.y, d.m - 1, d.d);
+      }
+      const dt = new Date(Math.round((v - 25569) * 86400000));
+      return isNaN(dt.getTime()) ? null : new Date(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
     }
     const s = String(v);
     const m = s.match(/(20\d{2})[-\/](\d{1,2})[-\/](\d{1,2})/);
     if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
     const d2 = new Date(s);
     return isNaN(d2.getTime()) ? null : d2;
+  }
+
+  // ¿La celda de la col0 de COMPRAS es una fecha (fila de folio/pedido)?
+  // Acepta objeto Date, serial Excel (rango ~1982–2119) y string con año 20xx.
+  // Antes solo aceptaba strings con /20\d{2}/, por lo que las fechas exportadas
+  // como celda de fecha real (serial) no se reconocían y se perdían período y
+  // conteo de pedidos.
+  function esFechaCell(v) {
+    if (v == null) return false;
+    if (v instanceof Date) return true;
+    if (typeof v === 'number') return v > 30000 && v < 80000;
+    return /20\d{2}/.test(String(v));
   }
 
   /* ─── Loaders (espejo del Python) ─────────────────────── */
@@ -158,7 +202,7 @@ window.DataProcessor = (function() {
       if (!r) continue;
       const fechaVal = r[0], folioVal = r[1], descVal = r[3];
       const cantVal = r[12], costoVal = r[16], totalVal = r[18];
-      if (fechaVal != null && /20\d{2}/.test(String(fechaVal))) {
+      if (esFechaCell(fechaVal)) {
         curFecha = parseFecha(fechaVal); curFolio = folioVal;
       } else if (descVal != null && String(descVal).trim()) {
         const cant = toNum(cantVal), costo = toNum(costoVal);
