@@ -98,11 +98,16 @@ def load_articulos(path):
 
 
 def find_col(raw, textos, fallback, max_scan=8):
-    """Busca el índice de columna cuyo encabezado (filas 0..max_scan) coincide con
-    alguno de los textos. Devuelve fallback si no lo encuentra. Tolera que el
-    reporte mueva columnas en exportaciones futuras."""
+    """Busca el índice de columna cuyo encabezado coincide con alguno de los
+    textos. Tolera que el reporte mueva/renombre columnas en exportaciones
+    futuras. Evita chocar con las filas de TÍTULO del reporte (que contienen el
+    texto buscado como substring) usando dos fases: primero exacta, luego
+    substring solo en filas de encabezado reales."""
     want = [t.lower() for t in textos]
     lim = min(max_scan, len(raw))
+    # Fase 1 — coincidencia EXACTA en cualquier fila. Los encabezados reales son
+    # exactos ("Existencia", "Último costo", "Rotación"), así que esto ubica la
+    # columna sin chocar con títulos como "Existencia y valor del inventario".
     for i in range(lim):
         row = raw.iloc[i]
         for j in range(len(row)):
@@ -110,7 +115,24 @@ def find_col(raw, textos, fallback, max_scan=8):
             if pd.isna(c):
                 continue
             s = str(c).strip().lower()
-            if any(w == s or w in s for w in want):
+            if any(w == s for w in want):
+                return j
+    # Fase 2 — substring, solo en filas de encabezado reales (3+ celdas no
+    # vacías). Las filas de título tienen texto solo en la col 0 y quedan fuera.
+    for i in range(lim):
+        row = raw.iloc[i]
+        no_vacias = sum(
+            1 for k in range(len(row))
+            if not pd.isna(row.iloc[k]) and str(row.iloc[k]).strip() != ''
+        )
+        if no_vacias < 3:
+            continue
+        for j in range(len(row)):
+            c = row.iloc[j]
+            if pd.isna(c):
+                continue
+            s = str(c).strip().lower()
+            if any(w in s for w in want):
                 return j
     return fallback
 
@@ -264,8 +286,10 @@ def process(files, output_dir, corte=None):
     master = df_ex.merge(df_rot, on='clave', how='left')
     master = master.merge(df_art[['clave', 'nombre', 'linea']], on='clave', how='left')
     master = master.merge(ventas_art, on='clave', how='left')
-    for c in ['salidas', 'inv_promedio', 'rotacion', 'venta_total', 'unidades_total', 'num_clientes']:
-        master[c] = pd.to_numeric(master.get(c, 0), errors='coerce').fillna(0)
+    for c in ['salidas', 'rotacion', 'venta_total', 'unidades_total', 'num_clientes']:
+        if c not in master.columns:
+            master[c] = 0
+        master[c] = pd.to_numeric(master[c], errors='coerce').fillna(0)
 
     # Demanda diaria/mensual basadas en el período REAL
     master['dpd'] = master['unidades_total'] / DIAS_PERIODO
