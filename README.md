@@ -43,6 +43,8 @@ El sistema puede cruzar el pedido sugerido contra la **existencia real del almac
 1. **Actualizar Datos** → casilla opcional "Existencia proveedor (Vazlo)". Al guardar en GitHub, el dato viaja dentro de `cedi_data.js` y queda permanente. Si se actualizan los 5 reportes sin subir un Vazlo nuevo, el dato anterior se **conserva** (carry-over) con aviso de antigüedad.
 2. **Compra Inteligente** → carga rápida solo en sesión, sin pasar por el flujo completo.
 
+**Aviso de dato ya cargado:** al entrar a Compra Inteligente con existencia Vazlo ya presente (desde Actualizar Datos, GitHub o una carga previa), aparece un aviso con el nombre del archivo, las claves con stock y la **frescura del dato** (✓ actualizado hoy · hace N días · ⚠ advertencia si supera 7 días o proviene de carry-over), preguntando si se quiere tomar en cuenta el archivo de la última carga, con acciones de un clic: *Sí, calcular contra stock Vazlo*, *Solo informativo* o *No usar ahora*.
+
 **Modos de uso en Compra Inteligente** (selector de 3 opciones; al cambiar de modo, el pedido se **recalcula automáticamente**):
 - **No usar existencia Vazlo** — comportamiento clásico.
 - **Informativo** — el cálculo no cambia; se agrega la columna *Exist. Vazlo* con semáforo de surtido (● completo · ◐ parcial · ○ sin stock), el filtro de surtido en el detalle del pedido, el *costo surtible* en los totales y estadísticas en el panel de resultados.

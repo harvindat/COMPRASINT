@@ -197,6 +197,10 @@ window.CALC = (function() {
         vazloStats.udsSurtibles += udsSurt;
         vazloStats.costoSurtible += udsSurt * it.costoUnit;
       }
+      // Techo Vazlo: en modo limitado, si sobró presupuesto significa que YA se
+      // financió toda la demanda que el proveedor puede surtir. El restante no
+      // puede gastarse en Vazlo aunque se amplíe el presupuesto.
+      vazloStats.techoAlcanzado = limitarVazlo && presupuestoRestante > 0;
     }
 
     // Estadísticas del pedido

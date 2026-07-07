@@ -34,12 +34,91 @@ window.PageCompra = (function() {
     try { return (window.CEDI_DATA.meta && window.CEDI_DATA.meta.vazlo) || {}; } catch (e) { return {}; }
   }
 
+  /* Días transcurridos desde la última carga del archivo del proveedor */
+  function vazloAntiguedadDias() {
+    const f = vazloMeta().fecha_carga;
+    if (!f) return null;
+    const m = String(f).match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return null;
+    const carga = new Date(+m[1], +m[2] - 1, +m[3]);
+    const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.round((hoy - carga) / 86400000));
+  }
+
+  /* Etiqueta de frescura del dato: hoy / hace N días / advertencia si es viejo */
+  function vazloFrescuraHTML() {
+    const dias = vazloAntiguedadDias();
+    const v = vazloMeta();
+    if (dias == null) return '';
+    if (dias === 0) return `<span style="color:var(--c-green)">✓ Datos actualizados hoy</span>`;
+    if (dias <= 7) return `<span style="color:var(--c-text2)">Cargado hace ${dias} día${dias === 1 ? '' : 's'} (${v.fecha_carga})</span>`;
+    return `<span style="color:#d9a441">⚠ Cargado hace ${dias} días (${v.fecha_carga}) — considera pedir a Vazlo un archivo nuevo</span>`;
+  }
+
+  /* Cambia el modo Vazlo desde cualquier control (radios o aviso) y
+     recalcula automáticamente si ya hay un pedido en pantalla. */
+  function setVazloModo(modo) {
+    params.usarVazlo = modo !== 'off';
+    params.limitarVazlo = modo === 'lim';
+    if (!params.usarVazlo) filtroSurtido = 'todos';
+    const panel = document.getElementById('vazlo-panel');
+    if (panel) { panel.innerHTML = vazloPanelHTML(); attachVazloEvents(); }
+    const aviso = document.getElementById('vazlo-aviso');
+    if (aviso) aviso.innerHTML = '';
+    if (currentResult) calcular();
+  }
+
+  /* ─── Aviso al entrar: ya hay archivo del proveedor cargado ─────
+     Aparece cuando existe dato Vazlo (de Actualizar Datos, GitHub o
+     una carga previa en sesión) y aún no se ha decidido un modo.
+     Pregunta si se quiere tomar en cuenta el archivo de la última
+     carga, con acciones de un clic. */
+  function vazloAvisoHTML() {
+    if (!vazloDisponible() || vazloModo() !== 'off') return '';
+    const v = vazloMeta();
+    const dias = vazloAntiguedadDias();
+    const esHoy = dias === 0;
+    const carry = v.carry_over ? ' <span style="color:#d9a441">(conservado de una actualización anterior)</span>' : '';
+    return `
+      <div class="card mb-16" style="border-left:3px solid ${esHoy ? 'var(--c-green)' : '#d9a441'}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:260px">
+            <div class="card-title" style="margin-bottom:4px">⛁ Ya hay existencia del proveedor cargada</div>
+            <div style="font-size:12px;color:var(--c-text2);line-height:1.6">
+              Archivo <strong>${v.archivo || 'EXISTENCIAVAZLO.xlsx'}</strong> · ${window.FMT.number(v.con_stock || 0)} claves con stock${carry}<br>
+              ${vazloFrescuraHTML()}<br>
+              ¿Quieres tomar en cuenta el archivo de la última carga en el cálculo del pedido?
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-green btn-sm" id="aviso-vazlo-lim">✓ Sí, calcular contra stock Vazlo</button>
+            <button class="btn btn-outline btn-sm" id="aviso-vazlo-info">Solo informativo</button>
+            <button class="btn btn-outline btn-sm" id="aviso-vazlo-no">No usar ahora</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function attachAvisoEvents() {
+    const bLim = document.getElementById('aviso-vazlo-lim');
+    if (bLim) bLim.addEventListener('click', () => setVazloModo('lim'));
+    const bInfo = document.getElementById('aviso-vazlo-info');
+    if (bInfo) bInfo.addEventListener('click', () => setVazloModo('info'));
+    const bNo = document.getElementById('aviso-vazlo-no');
+    if (bNo) bNo.addEventListener('click', () => {
+      const aviso = document.getElementById('vazlo-aviso');
+      if (aviso) aviso.innerHTML = '';
+    });
+  }
+
   function render() {
     const html = `
       <div class="page-header">
         <div class="page-title">Compra Inteligente</div>
         <div class="page-sub">Simulador de pedido óptimo con restricción de presupuesto</div>
       </div>
+
+      <div id="vazlo-aviso">${vazloAvisoHTML()}</div>
 
       <div class="section-row cols-2" style="margin-bottom:16px">
         <div class="card">
@@ -182,7 +261,8 @@ window.PageCompra = (function() {
           <span style="font-size:10px;color:var(--c-green);border:1px solid var(--c-green);border-radius:4px;padding:1px 6px">DATO CARGADO · ${v.fecha_carga || '—'}</span>
         </div>
         <div style="font-size:11px;color:var(--c-text3);margin-top:2px">
-          ${window.FMT.number(v.matched || 0)} claves cruzadas · ${window.FMT.number(v.con_stock || 0)} con stock en el almacén del proveedor · al cambiar el modo, el pedido se recalcula automáticamente
+          ${window.FMT.number(v.matched || 0)} claves cruzadas · ${window.FMT.number(v.con_stock || 0)} con stock en el almacén del proveedor · ${vazloFrescuraHTML()}<br>
+          Al cambiar el modo, el pedido se recalcula automáticamente.
         </div>
         ${radio('off', 'No usar existencia Vazlo', 'El cálculo ignora el stock del proveedor (comportamiento clásico).')}
         ${radio('info', 'Informativo', 'Agrega la columna Exist. Vazlo y el filtro de surtido. El pedido NO cambia.')}
@@ -207,18 +287,9 @@ window.PageCompra = (function() {
   }
 
   function attachVazloEvents() {
+    attachAvisoEvents();
     document.querySelectorAll('input[name="vazlo-mode"]').forEach(r => {
-      r.addEventListener('change', () => {
-        params.usarVazlo = r.value !== 'off';
-        params.limitarVazlo = r.value === 'lim';
-        if (!params.usarVazlo) filtroSurtido = 'todos';
-        // Redibujar el panel para resaltar el modo activo
-        const panel = document.getElementById('vazlo-panel');
-        if (panel) { panel.innerHTML = vazloPanelHTML(); attachVazloEvents(); }
-        // RECÁLCULO AUTOMÁTICO: si ya hay un pedido calculado, el cambio
-        // de modo actualiza el resultado del encabezado al instante.
-        if (currentResult) calcular();
-      });
+      r.addEventListener('change', () => setVazloModo(r.value));
     });
 
     const inline = document.getElementById('file-vazlo-inline');
@@ -233,9 +304,11 @@ window.PageCompra = (function() {
         const stats = window.DataProcessor.aplicarVazloEnSesion(parsedV.map, f.name);
         if (!stats) throw new Error('No hay dataset base cargado en la sesión.');
         params.usarVazlo = true;
-        // Redibujar el panel con el nuevo estado
+        // Redibujar el panel con el nuevo estado y ocultar el aviso
         const panel = document.getElementById('vazlo-panel');
         if (panel) { panel.innerHTML = vazloPanelHTML(); attachVazloEvents(); }
+        const aviso = document.getElementById('vazlo-aviso');
+        if (aviso) aviso.innerHTML = '';
         // Si ya había un pedido calculado, recalcular de inmediato con el dato nuevo
         if (currentResult) calcular();
       } catch (err) {
