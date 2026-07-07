@@ -156,29 +156,37 @@ window.PageCompra = (function() {
   }
 
   /* ─── Panel de opciones "Existencia Vazlo" ─────────────
-     · Con dato cargado → checkbox de lectura + modo agresivo.
+     Selector de 3 modos con recálculo automático:
+       off  → el cálculo ignora al proveedor
+       info → columna + filtro de surtido, el pedido no cambia
+       lim  → el pedido SE CALCULA contra el stock del proveedor
      · Sin dato → carga rápida en sesión sin pasar por el flujo
        completo de 5 archivos de Actualizar Datos. */
+  function vazloModo() {
+    return params.usarVazlo ? (params.limitarVazlo ? 'lim' : 'info') : 'off';
+  }
+
   function vazloPanelHTML() {
     const disp = vazloDisponible();
     const v = vazloMeta();
     if (disp) {
+      const modo = vazloModo();
+      const radio = (val, titulo, desc) => `
+        <label style="font-size:12px;display:flex;align-items:flex-start;gap:8px;margin-top:8px;cursor:pointer;padding:8px 10px;border:1px solid ${modo === val ? 'var(--c-accent)' : 'var(--c-border)'};border-radius:6px;${modo === val ? 'background:rgba(218,54,51,0.06)' : ''}">
+          <input type="radio" name="vazlo-mode" value="${val}" ${modo === val ? 'checked' : ''} style="margin-top:2px">
+          <span><strong>${titulo}</strong><br><span style="color:var(--c-text3);font-size:11px">${desc}</span></span>
+        </label>`;
       return `
         <div class="control-label" style="display:flex;align-items:center;gap:6px">
           Existencia del proveedor (Vazlo)
           <span style="font-size:10px;color:var(--c-green);border:1px solid var(--c-green);border-radius:4px;padding:1px 6px">DATO CARGADO · ${v.fecha_carga || '—'}</span>
         </div>
         <div style="font-size:11px;color:var(--c-text3);margin-top:2px">
-          ${window.FMT.number(v.matched || 0)} claves cruzadas · ${window.FMT.number(v.con_stock || 0)} con stock en el almacén del proveedor
+          ${window.FMT.number(v.matched || 0)} claves cruzadas · ${window.FMT.number(v.con_stock || 0)} con stock en el almacén del proveedor · al cambiar el modo, el pedido se recalcula automáticamente
         </div>
-        <label style="font-size:12px;display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer">
-          <input type="checkbox" id="opt-vazlo" ${params.usarVazlo ? 'checked' : ''}>
-          Leer existencia Vazlo (agrega columna y filtro de surtido)
-        </label>
-        <label style="font-size:12px;display:flex;align-items:center;gap:6px;margin-top:6px;cursor:pointer;${params.usarVazlo ? '' : 'opacity:0.45'}" id="lbl-limitar-vazlo">
-          <input type="checkbox" id="opt-limitar-vazlo" ${params.limitarVazlo ? 'checked' : ''} ${params.usarVazlo ? '' : 'disabled'}>
-          Limitar el pedido al stock del proveedor <span style="color:var(--c-text3)">(reasigna presupuesto a lo que sí puede surtir)</span>
-        </label>
+        ${radio('off', 'No usar existencia Vazlo', 'El cálculo ignora el stock del proveedor (comportamiento clásico).')}
+        ${radio('info', 'Informativo', 'Agrega la columna Exist. Vazlo y el filtro de surtido. El pedido NO cambia.')}
+        ${radio('lim', 'Calcular contra stock Vazlo', 'El pedido se topa al stock del proveedor y el presupuesto se reasigna a lo que SÍ puede surtir. El resultado del encabezado cambia.')}
         <div style="font-size:11px;color:var(--c-text3);margin-top:8px">
           ¿Archivo nuevo del proveedor?
           <label style="cursor:pointer;color:var(--c-accent);text-decoration:underline">Reemplazar en sesión<input type="file" id="file-vazlo-inline" accept=".xlsx,.xls" style="display:none"></label>
@@ -199,18 +207,19 @@ window.PageCompra = (function() {
   }
 
   function attachVazloEvents() {
-    const opt = document.getElementById('opt-vazlo');
-    if (opt) opt.addEventListener('change', () => {
-      params.usarVazlo = opt.checked;
-      if (!opt.checked) { params.limitarVazlo = false; filtroSurtido = 'todos'; }
-      const sub = document.getElementById('opt-limitar-vazlo');
-      const lbl = document.getElementById('lbl-limitar-vazlo');
-      if (sub) { sub.disabled = !opt.checked; if (!opt.checked) sub.checked = false; }
-      if (lbl) lbl.style.opacity = opt.checked ? '1' : '0.45';
+    document.querySelectorAll('input[name="vazlo-mode"]').forEach(r => {
+      r.addEventListener('change', () => {
+        params.usarVazlo = r.value !== 'off';
+        params.limitarVazlo = r.value === 'lim';
+        if (!params.usarVazlo) filtroSurtido = 'todos';
+        // Redibujar el panel para resaltar el modo activo
+        const panel = document.getElementById('vazlo-panel');
+        if (panel) { panel.innerHTML = vazloPanelHTML(); attachVazloEvents(); }
+        // RECÁLCULO AUTOMÁTICO: si ya hay un pedido calculado, el cambio
+        // de modo actualiza el resultado del encabezado al instante.
+        if (currentResult) calcular();
+      });
     });
-
-    const sub = document.getElementById('opt-limitar-vazlo');
-    if (sub) sub.addEventListener('change', () => { params.limitarVazlo = sub.checked; });
 
     const inline = document.getElementById('file-vazlo-inline');
     if (inline) inline.addEventListener('change', async e => {
@@ -227,11 +236,8 @@ window.PageCompra = (function() {
         // Redibujar el panel con el nuevo estado
         const panel = document.getElementById('vazlo-panel');
         if (panel) { panel.innerHTML = vazloPanelHTML(); attachVazloEvents(); }
-        // Si ya había un pedido calculado, avisar que hay que recalcular
-        if (currentResult) {
-          const rp = document.getElementById('result-panel-wrap');
-          if (rp) rp.insertAdjacentHTML('afterbegin', `<div style="font-size:12px;color:var(--c-yellow,#d9a441);margin-bottom:8px">⚠ Existencia Vazlo actualizada. Vuelve a presionar "Calcular pedido" para aplicarla.</div>`);
-        }
+        // Si ya había un pedido calculado, recalcular de inmediato con el dato nuevo
+        if (currentResult) calcular();
       } catch (err) {
         console.error('Error cargando existencia Vazlo:', err);
         const status2 = document.getElementById('vazlo-inline-status');
@@ -495,11 +501,35 @@ window.PageCompra = (function() {
         ? `<div class="totals-item"><div class="totals-label">Costo surtible (Vazlo)</div><div class="totals-val" style="color:var(--c-green)">${F.currency(costoSurtible)}</div></div>`
         : '';
       const vazloTh = vazloOn ? '<th class="right">Exist. Vazlo</th>' : '';
+
+      // Indicador de filtrado: cuando el filtro de surtido o la búsqueda están
+      // activos, el encabezado muestra "X de Y" y un badge para que sea
+      // inconfundible que los totales corresponden al subconjunto filtrado.
+      const totalCompleto = currentResult.pedido.length;
+      const hayFiltro = total !== totalCompleto;
+      const FILTRO_LABEL = {
+        con_stock: 'Con existencia Vazlo', completo: 'Surtido completo',
+        parcial: 'Surtido parcial', sin_stock: 'Sin existencia Vazlo'
+      };
+      const filtroActivo = [];
+      if (vazloOn && filtroSurtido !== 'todos') filtroActivo.push(FILTRO_LABEL[filtroSurtido] || filtroSurtido);
+      if (query) filtroActivo.push(`"${query}"`);
+      const filtroBadge = hayFiltro
+        ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+             <span style="font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--c-accent);border:1px solid var(--c-accent);border-radius:4px;padding:2px 8px">FILTRADO: ${filtroActivo.join(' + ') || 'activo'}</span>
+             <span style="font-size:11px;color:var(--c-text3)">Los totales de abajo corresponden solo a los artículos filtrados · el pedido completo es ${F.number(totalCompleto)} arts</span>
+           </div>`
+        : '';
+      const artsVal = hayFiltro
+        ? `${F.number(total)} <span style="font-size:12px;color:var(--c-text3);font-weight:400">de ${F.number(totalCompleto)}</span>`
+        : F.number(total);
+      const sufijo = hayFiltro ? ' (filtrado)' : '';
       content.innerHTML = `
+        ${filtroBadge}
         <div class="totals-row">
-          <div class="totals-item"><div class="totals-label">Artículos en pedido</div><div class="totals-val accent">${F.number(total)}</div></div>
-          <div class="totals-item"><div class="totals-label">Unidades totales</div><div class="totals-val">${F.number(totalUds)}</div></div>
-          <div class="totals-item"><div class="totals-label">Costo total c/IVA</div><div class="totals-val green">${F.currency(totalCosto)}</div></div>
+          <div class="totals-item"><div class="totals-label">Artículos en pedido${sufijo}</div><div class="totals-val accent">${artsVal}</div></div>
+          <div class="totals-item"><div class="totals-label">Unidades totales${sufijo}</div><div class="totals-val">${F.number(totalUds)}</div></div>
+          <div class="totals-item"><div class="totals-label">Costo total c/IVA${sufijo}</div><div class="totals-val green">${F.currency(totalCosto)}</div></div>
           ${surtibleItem}
           <div class="totals-item"><div class="totals-label">Presupuesto restante</div><div class="totals-val">${F.currency(currentResult.presupuestoRestante)}</div></div>
         </div>
