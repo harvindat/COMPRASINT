@@ -15,10 +15,24 @@ window.PageCompra = (function() {
     diasCoberturaMeta: 30,
     factorSS: 1.0,
     filtroABC: ['A', 'B'],
-    soloConDemanda: true
+    soloConDemanda: true,
+    usarVazlo: false,     // leer existencia del almacén del proveedor
+    limitarVazlo: false   // modo agresivo: topar pedido al stock del proveedor
   };
 
   let params = { ...defaults };
+  let filtroSurtido = 'todos'; // filtro de tabla: todos | con_stock | completo | parcial | sin_stock
+
+  /* ─── Estado del dato Vazlo en el dataset vigente ─────── */
+  function vazloDisponible() {
+    try {
+      const d = window.CEDI_DATA;
+      return !!(d && d.meta && d.meta.vazlo && d.meta.vazlo.cargado);
+    } catch (e) { return false; }
+  }
+  function vazloMeta() {
+    try { return (window.CEDI_DATA.meta && window.CEDI_DATA.meta.vazlo) || {}; } catch (e) { return {}; }
+  }
 
   function render() {
     const html = `
@@ -88,6 +102,10 @@ window.PageCompra = (function() {
             </div>
           </div>
 
+          <div class="control-group" style="margin-top:12px;padding:12px;border:1px solid var(--c-border);border-radius:8px" id="vazlo-panel">
+            ${vazloPanelHTML()}
+          </div>
+
           <div class="btn-row mt-12">
             <button class="btn btn-primary" id="btn-calcular">⟁ Calcular pedido</button>
             <button class="btn btn-outline" id="btn-reset">Resetear</button>
@@ -110,12 +128,20 @@ window.PageCompra = (function() {
               <span class="search-icon">⌕</span>
               <input type="text" id="search-pedido" placeholder="Buscar clave o descripción…" style="font-size:12px" />
             </div>
+            <select id="filtro-surtido" style="width:190px;font-size:12px;display:none">
+              <option value="todos">Surtido: Todos</option>
+              <option value="con_stock">Con existencia Vazlo (&gt;0)</option>
+              <option value="completo">Surtido completo</option>
+              <option value="parcial">Surtido parcial</option>
+              <option value="sin_stock">Sin existencia Vazlo</option>
+            </select>
             <select id="sort-pedido" style="width:160px;font-size:12px">
               <option value="score">Ordenar: Prioridad</option>
               <option value="costoFinal">Ordenar: Costo total</option>
               <option value="cantFinal">Ordenar: Cantidad</option>
               <option value="abc">Ordenar: ABC</option>
               <option value="diasCobertura">Ordenar: Cobertura actual</option>
+              <option value="existenciaVazlo">Ordenar: Exist. Vazlo</option>
             </select>
             <button class="btn btn-green btn-sm" id="btn-export-pedido">↓ Excel</button>
           </div>
@@ -129,7 +155,94 @@ window.PageCompra = (function() {
     attachEvents();
   }
 
+  /* ─── Panel de opciones "Existencia Vazlo" ─────────────
+     · Con dato cargado → checkbox de lectura + modo agresivo.
+     · Sin dato → carga rápida en sesión sin pasar por el flujo
+       completo de 5 archivos de Actualizar Datos. */
+  function vazloPanelHTML() {
+    const disp = vazloDisponible();
+    const v = vazloMeta();
+    if (disp) {
+      return `
+        <div class="control-label" style="display:flex;align-items:center;gap:6px">
+          Existencia del proveedor (Vazlo)
+          <span style="font-size:10px;color:var(--c-green);border:1px solid var(--c-green);border-radius:4px;padding:1px 6px">DATO CARGADO · ${v.fecha_carga || '—'}</span>
+        </div>
+        <div style="font-size:11px;color:var(--c-text3);margin-top:2px">
+          ${window.FMT.number(v.matched || 0)} claves cruzadas · ${window.FMT.number(v.con_stock || 0)} con stock en el almacén del proveedor
+        </div>
+        <label style="font-size:12px;display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer">
+          <input type="checkbox" id="opt-vazlo" ${params.usarVazlo ? 'checked' : ''}>
+          Leer existencia Vazlo (agrega columna y filtro de surtido)
+        </label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:6px;margin-top:6px;cursor:pointer;${params.usarVazlo ? '' : 'opacity:0.45'}" id="lbl-limitar-vazlo">
+          <input type="checkbox" id="opt-limitar-vazlo" ${params.limitarVazlo ? 'checked' : ''} ${params.usarVazlo ? '' : 'disabled'}>
+          Limitar el pedido al stock del proveedor <span style="color:var(--c-text3)">(reasigna presupuesto a lo que sí puede surtir)</span>
+        </label>
+        <div style="font-size:11px;color:var(--c-text3);margin-top:8px">
+          ¿Archivo nuevo del proveedor?
+          <label style="cursor:pointer;color:var(--c-accent);text-decoration:underline">Reemplazar en sesión<input type="file" id="file-vazlo-inline" accept=".xlsx,.xls" style="display:none"></label>
+          · Para hacerlo permanente usa <strong>Actualizar Datos → Guardar en GitHub</strong>.
+        </div>`;
+    }
+    return `
+      <div class="control-label">Existencia del proveedor (Vazlo)</div>
+      <div style="font-size:12px;color:var(--c-text2);margin-top:4px;line-height:1.6">
+        Aún no hay existencia del proveedor cargada. Cárgala aquí para validar qué artículos del pedido
+        <strong>sí puede surtir el proveedor</strong>, o hazlo desde <strong>Actualizar Datos</strong> para guardarla en GitHub.
+      </div>
+      <label class="btn btn-outline btn-sm" style="cursor:pointer;margin-top:8px;display:inline-block">
+        ⛁ Cargar EXISTENCIAVAZLO.xlsx (solo esta sesión)
+        <input type="file" id="file-vazlo-inline" accept=".xlsx,.xls" style="display:none">
+      </label>
+      <div id="vazlo-inline-status" style="font-size:11px;color:var(--c-text3);margin-top:6px"></div>`;
+  }
+
+  function attachVazloEvents() {
+    const opt = document.getElementById('opt-vazlo');
+    if (opt) opt.addEventListener('change', () => {
+      params.usarVazlo = opt.checked;
+      if (!opt.checked) { params.limitarVazlo = false; filtroSurtido = 'todos'; }
+      const sub = document.getElementById('opt-limitar-vazlo');
+      const lbl = document.getElementById('lbl-limitar-vazlo');
+      if (sub) { sub.disabled = !opt.checked; if (!opt.checked) sub.checked = false; }
+      if (lbl) lbl.style.opacity = opt.checked ? '1' : '0.45';
+    });
+
+    const sub = document.getElementById('opt-limitar-vazlo');
+    if (sub) sub.addEventListener('change', () => { params.limitarVazlo = sub.checked; });
+
+    const inline = document.getElementById('file-vazlo-inline');
+    if (inline) inline.addEventListener('change', async e => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const status = document.getElementById('vazlo-inline-status');
+      if (status) status.textContent = '⏳ Leyendo archivo del proveedor…';
+      try {
+        const parsedV = await window.DataProcessor.parseVazloFile(f);
+        if (!parsedV.filas) throw new Error('No se detectaron claves con existencia en el archivo. Verifica que tenga columnas de clave y existencia.');
+        const stats = window.DataProcessor.aplicarVazloEnSesion(parsedV.map, f.name);
+        if (!stats) throw new Error('No hay dataset base cargado en la sesión.');
+        params.usarVazlo = true;
+        // Redibujar el panel con el nuevo estado
+        const panel = document.getElementById('vazlo-panel');
+        if (panel) { panel.innerHTML = vazloPanelHTML(); attachVazloEvents(); }
+        // Si ya había un pedido calculado, avisar que hay que recalcular
+        if (currentResult) {
+          const rp = document.getElementById('result-panel-wrap');
+          if (rp) rp.insertAdjacentHTML('afterbegin', `<div style="font-size:12px;color:var(--c-yellow,#d9a441);margin-bottom:8px">⚠ Existencia Vazlo actualizada. Vuelve a presionar "Calcular pedido" para aplicarla.</div>`);
+        }
+      } catch (err) {
+        console.error('Error cargando existencia Vazlo:', err);
+        const status2 = document.getElementById('vazlo-inline-status');
+        if (status2) { status2.style.color = 'var(--c-red)'; status2.textContent = '✗ ' + err.message; }
+      }
+    });
+  }
+
   function attachEvents() {
+    attachVazloEvents();
+
     // Sliders
     const sliders = [
       { id: 'sl-presupuesto', display: 'val-presupuesto', fmt: v => '$' + parseInt(v).toLocaleString('es-MX'), key: 'presupuesto' },
@@ -190,6 +303,13 @@ window.PageCompra = (function() {
       currentPage = 1;
       renderTablaPedido();
     });
+
+    const filtroEl = document.getElementById('filtro-surtido');
+    if (filtroEl) filtroEl.addEventListener('change', () => {
+      filtroSurtido = filtroEl.value;
+      currentPage = 1;
+      renderTablaPedido();
+    });
   }
 
   function updateFiltroABC() {
@@ -205,6 +325,15 @@ window.PageCompra = (function() {
     const F = window.FMT;
 
     updateFiltroABC();
+
+    // Blindaje: si el dataset en sesión ya no trae dato Vazlo, desactivar el modo
+    if (params.usarVazlo && !vazloDisponible()) {
+      params.usarVazlo = false;
+      params.limitarVazlo = false;
+      filtroSurtido = 'todos';
+      const panel = document.getElementById('vazlo-panel');
+      if (panel) { panel.innerHTML = vazloPanelHTML(); attachVazloEvents(); }
+    }
 
     const btn = document.getElementById('btn-calcular');
     if (btn) { btn.textContent = '⏳ Calculando…'; btn.disabled = true; }
@@ -239,9 +368,30 @@ window.PageCompra = (function() {
       return `<span class="badge badge-${cat}" style="margin-right:4px">${cat}: ${d.arts} arts · ${F.compact(d.costo)}</span>`;
     }).join('');
 
+    // Bloque de surtido Vazlo
+    let vazloBlock = '';
+    if (result.usarVazlo && result.vazloStats) {
+      const vs = result.vazloStats;
+      const pctSurtible = result.totalCosto > 0 ? (vs.costoSurtible / result.totalCosto * 100).toFixed(1) : '0.0';
+      const modo = result.limitarVazlo
+        ? `Modo agresivo: pedido topado al stock del proveedor · ${F.number(vs.excluidos)} arts sin stock excluidos · ${F.number(vs.recortados)} recortados`
+        : 'Modo informativo: el cálculo no se limitó al stock del proveedor';
+      vazloBlock = `
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--c-border)">
+          <div class="rp-label" style="margin-bottom:6px">Surtido contra existencia Vazlo · ${pctSurtible}% del costo es surtible</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span class="badge" style="background:rgba(46,160,67,0.15);color:var(--c-green)">● Completo: ${F.number(vs.completo)}</span>
+            <span class="badge" style="background:rgba(217,164,65,0.15);color:#d9a441">◐ Parcial: ${F.number(vs.parcial)}</span>
+            <span class="badge" style="background:rgba(218,54,51,0.15);color:var(--c-red)">○ Sin stock: ${F.number(vs.sinStock)}</span>
+            <span class="badge" style="background:rgba(255,255,255,0.06);color:var(--c-text2)">Surtible: ${F.compact(vs.costoSurtible)}</span>
+          </div>
+          <div style="font-size:11px;color:var(--c-text3);margin-top:6px">${modo}</div>
+        </div>`;
+    }
+
     panel.innerHTML = `
       <div class="result-panel">
-        <div class="rp-label">Pedido óptimo calculado · Lead time ${params.leadTime} días · Factor ×${flt.toFixed(2)}</div>
+        <div class="rp-label">Pedido óptimo calculado · Lead time ${params.leadTime} días · Factor ×${flt.toFixed(2)}${result.usarVazlo ? ' · Existencia Vazlo activa' : ''}</div>
         <div class="rp-value">${F.compact(result.totalCosto)}</div>
         <div class="rp-sub">${pctUsado}% del presupuesto utilizado · ${F.compact(result.presupuestoRestante)} disponible</div>
         <div class="rp-grid">
@@ -250,6 +400,7 @@ window.PageCompra = (function() {
           <div><div class="rp-item-label">Cobertura objetivo</div><div class="rp-item-val">${params.diasCoberturaMeta} días</div></div>
         </div>
         <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap">${abcRows}</div>
+        ${vazloBlock}
       </div>`;
   }
 
@@ -259,12 +410,30 @@ window.PageCompra = (function() {
     const searchEl = document.getElementById('search-pedido');
     const query = searchEl ? searchEl.value.toLowerCase() : '';
 
+    const vazloOn = !!currentResult.usarVazlo;
+
+    // Mostrar/ocultar el filtro de surtido según el modo del cálculo
+    const filtroEl = document.getElementById('filtro-surtido');
+    if (filtroEl) {
+      filtroEl.style.display = vazloOn ? '' : 'none';
+      filtroEl.value = vazloOn ? filtroSurtido : 'todos';
+    }
+
     let pedido = currentResult.pedido;
     if (query) {
       pedido = pedido.filter(a =>
         (a.clave || '').toLowerCase().includes(query) ||
         (a.descripcion || '').toLowerCase().includes(query)
       );
+    }
+
+    // Filtro de surtido contra existencia del proveedor
+    if (vazloOn && filtroSurtido !== 'todos') {
+      pedido = pedido.filter(a => {
+        const ev = a.existenciaVazlo || 0;
+        if (filtroSurtido === 'con_stock') return ev > 0;
+        return a.surtido === filtroSurtido;
+      });
     }
 
     // Sort
@@ -284,17 +453,29 @@ window.PageCompra = (function() {
     // Totals
     const totalUds = pedido.reduce((s, a) => s + a.cantFinal, 0);
     const totalCosto = pedido.reduce((s, a) => s + a.costoFinal, 0);
+    // Costo surtible: la parte del pedido filtrado que el proveedor SÍ puede entregar
+    const costoSurtible = vazloOn
+      ? pedido.reduce((s, a) => s + Math.min(a.cantFinal, a.existenciaVazlo || 0) * a.costoUnit, 0)
+      : 0;
 
     const rows = slice.map(a => {
       const diasCls = F.diasColor(a.diasCobertura);
       const score = Math.round(a.score || 0);
       const anclaTag = a.pctAncla > 0.3 ? ' <span class="badge badge-ancla" style="font-size:9px">ancla</span>' : '';
+      let vazloCell = '';
+      if (vazloOn) {
+        const ev = a.existenciaVazlo || 0;
+        const col = a.surtido === 'completo' ? 'var(--c-green)' : (a.surtido === 'parcial' ? '#d9a441' : 'var(--c-red)');
+        const icon = a.surtido === 'completo' ? '●' : (a.surtido === 'parcial' ? '◐' : '○');
+        vazloCell = `<td class="right mono" style="color:${col};font-weight:600" title="${a.surtido === 'completo' ? 'El proveedor cubre todo el pedido' : a.surtido === 'parcial' ? 'El proveedor cubre parcialmente' : 'Sin existencia en el proveedor'}">${icon} ${F.number(ev)}</td>`;
+      }
       return `
         <tr>
           <td class="clave">${a.clave}</td>
           <td class="desc">${a.descripcion}${anclaTag}</td>
           <td>${F.abcBadge(a.abc)}</td>
           <td class="right mono">${F.number(a.existencia)}</td>
+          ${vazloCell}
           <td class="right"><span class="dias-cob ${diasCls}">${Math.round(a.diasCobertura)}d</span></td>
           <td class="right" style="font-weight:600;color:var(--c-accent)">${F.number(a.cantFinal)}</td>
           <td class="right">${F.currency(a.costoUnit)}</td>
@@ -310,18 +491,23 @@ window.PageCompra = (function() {
 
     const content = document.getElementById('tabla-pedido-content');
     if (content) {
+      const surtibleItem = vazloOn
+        ? `<div class="totals-item"><div class="totals-label">Costo surtible (Vazlo)</div><div class="totals-val" style="color:var(--c-green)">${F.currency(costoSurtible)}</div></div>`
+        : '';
+      const vazloTh = vazloOn ? '<th class="right">Exist. Vazlo</th>' : '';
       content.innerHTML = `
         <div class="totals-row">
           <div class="totals-item"><div class="totals-label">Artículos en pedido</div><div class="totals-val accent">${F.number(total)}</div></div>
           <div class="totals-item"><div class="totals-label">Unidades totales</div><div class="totals-val">${F.number(totalUds)}</div></div>
           <div class="totals-item"><div class="totals-label">Costo total c/IVA</div><div class="totals-val green">${F.currency(totalCosto)}</div></div>
+          ${surtibleItem}
           <div class="totals-item"><div class="totals-label">Presupuesto restante</div><div class="totals-val">${F.currency(currentResult.presupuestoRestante)}</div></div>
         </div>
         <div class="tbl-wrap" style="max-height:420px;overflow-y:auto;margin-top:10px">
           <table class="data-table">
             <thead><tr>
               <th>Clave</th><th>Descripción</th><th>ABC</th>
-              <th class="right">Stock</th><th class="right">Cob. actual</th>
+              <th class="right">Stock</th>${vazloTh}<th class="right">Cob. actual</th>
               <th class="right">Cant. pedir</th><th class="right">Costo unit.</th>
               <th class="right">Costo total</th><th>Prioridad</th>
             </tr></thead>
@@ -352,6 +538,7 @@ window.PageCompra = (function() {
 
   function resetParams() {
     params = { ...defaults };
+    filtroSurtido = 'todos';
     render();
   }
 
@@ -361,26 +548,40 @@ window.PageCompra = (function() {
       return;
     }
     const F = window.FMT;
-    const rows = currentResult.pedido.map(a => ({
-      'Clave': a.clave,
-      'Descripción': a.descripcion,
-      'Línea': a.linea,
-      'ABC': a.abc,
-      'Stock Actual': a.existencia,
-      'Días Cobertura Actual': Math.round(a.diasCobertura),
-      'Stock Seguridad': a.ss,
-      'Pto. Reorden': a.rop,
-      'Cantidad a Pedir': a.cantFinal,
-      'Costo Unit. s/IVA': F.round2(a.costoUnit / 1.16),
-      'Costo Unit. c/IVA': F.round2(a.costoUnit),
-      'Costo Total c/IVA': F.round2(a.costoFinal),
-      'Score Prioridad': Math.round(a.score),
-      '% Clientes Ancla': F.round2(a.pctAncla * 100)
-    }));
+    const vazloOn = !!currentResult.usarVazlo;
+    const SURTIDO_LABEL = { completo: 'COMPLETO', parcial: 'PARCIAL', sin_stock: 'SIN STOCK' };
+    const rows = currentResult.pedido.map(a => {
+      const base = {
+        'Clave': a.clave,
+        'Descripción': a.descripcion,
+        'Línea': a.linea,
+        'ABC': a.abc,
+        'Stock Actual': a.existencia
+      };
+      if (vazloOn) {
+        base['Existencia Vazlo'] = a.existenciaVazlo || 0;
+        base['Surtido Proveedor'] = SURTIDO_LABEL[a.surtido] || '';
+        base['Uds Surtibles'] = Math.min(a.cantFinal, a.existenciaVazlo || 0);
+      }
+      return Object.assign(base, {
+        'Días Cobertura Actual': Math.round(a.diasCobertura),
+        'Stock Seguridad': a.ss,
+        'Pto. Reorden': a.rop,
+        'Cantidad a Pedir': a.cantFinal,
+        'Costo Unit. s/IVA': F.round2(a.costoUnit / 1.16),
+        'Costo Unit. c/IVA': F.round2(a.costoUnit),
+        'Costo Total c/IVA': F.round2(a.costoFinal),
+        'Score Prioridad': Math.round(a.score),
+        '% Clientes Ancla': F.round2(a.pctAncla * 100)
+      });
+    });
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [8,30,18,5,10,14,12,12,14,16,16,16,12,14].map(w => ({ wch: w }));
+    const cols = vazloOn
+      ? [8,30,18,5,10,14,16,12,10,12,12,14,16,16,16,12,14]
+      : [8,30,18,5,10,14,12,12,14,16,16,16,12,14];
+    ws['!cols'] = cols.map(w => ({ wch: w }));
     XLSX.utils.book_append_sheet(wb, ws, 'Pedido');
 
     // Summary sheet
@@ -391,6 +592,15 @@ window.PageCompra = (function() {
       { 'Parámetro': 'Días Cobertura Objetivo', 'Valor': params.diasCoberturaMeta },
       { 'Parámetro': 'Factor Stock Seguridad', 'Valor': params.factorSS },
       { 'Parámetro': 'Filtro ABC', 'Valor': params.filtroABC.join(',') },
+      { 'Parámetro': 'Existencia Vazlo', 'Valor': vazloOn ? 'ACTIVA' : 'No usada' },
+      ...(vazloOn ? [
+        { 'Parámetro': 'Modo Vazlo', 'Valor': currentResult.limitarVazlo ? 'Limitado al stock del proveedor' : 'Informativo' },
+        { 'Parámetro': 'Fecha carga Vazlo', 'Valor': vazloMeta().fecha_carga || '—' },
+        { 'Parámetro': 'Arts surtido completo', 'Valor': currentResult.vazloStats ? currentResult.vazloStats.completo : 0 },
+        { 'Parámetro': 'Arts surtido parcial', 'Valor': currentResult.vazloStats ? currentResult.vazloStats.parcial : 0 },
+        { 'Parámetro': 'Arts sin stock proveedor', 'Valor': currentResult.vazloStats ? currentResult.vazloStats.sinStock : 0 },
+        { 'Parámetro': 'Costo surtible c/IVA', 'Valor': currentResult.vazloStats ? F.round2(currentResult.vazloStats.costoSurtible) : 0 },
+      ] : []),
       { 'Parámetro': '---', 'Valor': '---' },
       { 'Parámetro': 'Total Artículos Pedido', 'Valor': currentResult.totalArts },
       { 'Parámetro': 'Total Unidades', 'Valor': currentResult.totalUnidades },

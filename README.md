@@ -32,6 +32,22 @@ El sistema ya no asume un período fijo de 5 meses. Detecta automáticamente el 
 | Días de cobertura objetivo | 7 – 60 días | Meta de días de stock post-pedido |
 | Factor stock de seguridad | 0.5× – 2.0× | Multiplica el SS calculado por el modelo |
 | Filtro ABC | A / B / C / D | Incluir/excluir categorías del pedido |
+| Existencia Vazlo | On / Off | Lee el stock del almacén del proveedor para validar surtido |
+| Limitar a stock Vazlo | On / Off | Modo agresivo: topa el pedido al stock del proveedor y reasigna presupuesto |
+
+## Existencia Vazlo (stock del proveedor)
+
+El sistema puede cruzar el pedido sugerido contra la **existencia real del almacén del proveedor** para pedir solo mercancía que sí puede ser surtida.
+
+**Carga del archivo** (`EXISTENCIAVAZLO.xlsx`, formato flexible: detecta columnas de clave y existencia automáticamente):
+1. **Actualizar Datos** → casilla opcional "Existencia proveedor (Vazlo)". Al guardar en GitHub, el dato viaja dentro de `cedi_data.js` y queda permanente. Si se actualizan los 5 reportes sin subir un Vazlo nuevo, el dato anterior se **conserva** (carry-over) con aviso de antigüedad.
+2. **Compra Inteligente** → carga rápida solo en sesión, sin pasar por el flujo completo.
+
+**Modos de uso en Compra Inteligente:**
+- **Informativo** — el cálculo no cambia; se agrega la columna *Exist. Vazlo* con semáforo de surtido (● completo · ◐ parcial · ○ sin stock), el filtro de surtido en el detalle del pedido, el *costo surtible* en los totales y estadísticas en el panel de resultados.
+- **Limitado (agresivo)** — la cantidad a pedir se topa al stock del proveedor y los artículos sin existencia Vazlo salen de la cascada de presupuesto, de modo que **el 100% del pedido resultante es surtible** y el presupuesto se reasigna a lo que el proveedor sí tiene.
+
+El export a Excel incluye *Existencia Vazlo*, *Surtido Proveedor* y *Uds Surtibles*, además de los parámetros del modo Vazlo en la hoja de resumen.
 
 ### Factores de lead time
 | Lead Time | Factor | Efecto |

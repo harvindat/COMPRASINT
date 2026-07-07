@@ -12,6 +12,7 @@ window.PageActualizar = (function() {
     { key: 'ROTINV',     label: 'Rotación de inventario', hint: 'ROTINV.xlsx',   icon: '↻' },
     { key: 'COMPRAS',    label: 'Compras del período',    hint: 'COMPRAS.xlsx',  icon: '↓' },
     { key: 'VECLIEARTS', label: 'Ventas por cliente',     hint: 'VECLIEARTS.xlsx', icon: '◉' },
+    { key: 'VAZLO',      label: 'Existencia proveedor (Vazlo)', hint: 'EXISTENCIAVAZLO.xlsx', icon: '⛁', optional: true },
   ];
 
   let files = {};        // { KEY: File }
@@ -29,8 +30,8 @@ window.PageActualizar = (function() {
       <div class="card mb-16" style="border-left:3px solid var(--c-accent)">
         <div class="card-title">Cómo funciona</div>
         <div style="font-size:13px;color:var(--c-text2);line-height:1.7">
-          <p>1. Exporta los 5 reportes del sistema en el mismo formato que los archivos originales.</p>
-          <p class="mt-4">2. Arrastra o selecciona cada archivo en su casilla. El sistema detecta automáticamente el período (semanas o meses) a partir de las fechas en COMPRAS.</p>
+          <p>1. Exporta los 5 reportes del sistema en el mismo formato que los archivos originales. Opcionalmente agrega el archivo de <strong>existencia del proveedor (Vazlo)</strong> para habilitar la validación de surtido en Compra Inteligente.</p>
+          <p class="mt-4">2. Arrastra o selecciona cada archivo en su casilla. El sistema detecta automáticamente el período (semanas o meses) a partir de las fechas en COMPRAS. Si ya habías cargado existencia Vazlo antes y no subes una nueva, el dato anterior se conserva.</p>
           <p class="mt-4">3. Presiona <strong>Procesar</strong> para validar y previsualizar los nuevos KPIs.</p>
           <p class="mt-4">4. Aplica los cambios para actualizar el dashboard en la sesión actual, o descarga el nuevo <code>cedi_data.js</code> para reemplazar el archivo en el proyecto de forma permanente.</p>
         </div>
@@ -60,11 +61,16 @@ window.PageActualizar = (function() {
   }
 
   function slotHTML(s) {
+    const optTag = s.optional ? ' <span style="font-size:10px;color:var(--c-text3);border:1px solid var(--c-border);border-radius:4px;padding:1px 5px;vertical-align:middle">OPCIONAL</span>' : '';
+    const prevVazlo = s.key === 'VAZLO' && window.CEDI_DATA && window.CEDI_DATA.meta && window.CEDI_DATA.meta.vazlo && window.CEDI_DATA.meta.vazlo.cargado;
+    const baseStatus = prevVazlo
+      ? `Dato vigente del ${window.CEDI_DATA.meta.vazlo.fecha_carga} · si no cargas uno nuevo, se conserva`
+      : `Esperando archivo · <span class="mono">${s.hint}</span>`;
     return `
-      <div class="export-card slot-card" data-slot="${s.key}" id="slot-${s.key}">
+      <div class="export-card slot-card" data-slot="${s.key}" id="slot-${s.key}" ${s.optional ? 'style="border-style:dashed"' : ''}>
         <div class="export-icon">${s.icon}</div>
-        <div class="export-title">${s.label}</div>
-        <div class="export-desc" id="slot-status-${s.key}">Esperando archivo · <span class="mono">${s.hint}</span></div>
+        <div class="export-title">${s.label}${optTag}</div>
+        <div class="export-desc" id="slot-status-${s.key}">${baseStatus}</div>
         <label class="btn btn-outline btn-sm" style="cursor:pointer">
           Seleccionar archivo
           <input type="file" accept=".xlsx,.xls" data-slot="${s.key}" style="display:none" />
@@ -109,8 +115,8 @@ window.PageActualizar = (function() {
     const card = document.getElementById('slot-' + key);
     if (card) card.style.borderColor = 'var(--c-green)';
 
-    // Habilitar procesar si están los 5
-    const allLoaded = SLOTS.every(s => files[s.key]);
+    // Habilitar procesar si están los 5 obligatorios (VAZLO es opcional)
+    const allLoaded = SLOTS.filter(s => !s.optional).every(s => files[s.key]);
     const btn = document.getElementById('btn-procesar');
     if (btn) btn.disabled = !allLoaded;
   }
@@ -135,6 +141,28 @@ window.PageActualizar = (function() {
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '⟁ Procesar archivos'; }
     }
+  }
+
+  function vazloPanelHTML(d) {
+    const v = d.meta && d.meta.vazlo;
+    if (!v || !v.cargado) {
+      return `<div class="card mb-16" style="border-left:3px solid var(--c-border)">
+        <div class="card-title">Existencia Vazlo</div>
+        <div style="font-size:13px;color:var(--c-text2)">No se cargó archivo del proveedor. La Compra Inteligente funcionará sin la columna "Existencia Vazlo". Puedes cargarlo aquí después o directamente en el módulo de Compra Inteligente.</div>
+      </div>`;
+    }
+    const F = window.FMT;
+    const carry = v.carry_over ? ` <span style="color:var(--c-yellow, #d9a441);font-size:11px">(conservado de la carga del ${v.fecha_carga} — considera actualizarlo)</span>` : '';
+    return `<div class="card mb-16" style="border-left:3px solid var(--c-accent)">
+      <div class="card-title">Existencia Vazlo · cruce con catálogo${carry}</div>
+      <div class="totals-row">
+        <div class="totals-item"><div class="totals-label">Claves en archivo</div><div class="totals-val">${F.number(v.claves_archivo || 0)}</div></div>
+        <div class="totals-item"><div class="totals-label">Cruzadas con catálogo</div><div class="totals-val accent">${F.number(v.matched || 0)}</div></div>
+        <div class="totals-item"><div class="totals-label">Con stock proveedor</div><div class="totals-val green">${F.number(v.con_stock || 0)}</div></div>
+        <div class="totals-item"><div class="totals-label">Sin cruce (no en catálogo)</div><div class="totals-val">${F.number(v.sin_match || 0)}</div></div>
+      </div>
+      <div style="font-size:12px;color:var(--c-text3);margin-top:8px">Al aplicar o guardar en GitHub, la existencia del proveedor viaja dentro de <code>cedi_data.js</code> y queda disponible para la Compra Inteligente.</div>
+    </div>`;
   }
 
   function renderPreview(d, counts) {
@@ -172,8 +200,11 @@ window.PageActualizar = (function() {
           <div class="totals-item"><div class="totals-label">Rotación</div><div class="totals-val">${F.number(counts.rotinv)}</div></div>
           <div class="totals-item"><div class="totals-label">Compras</div><div class="totals-val">${F.number(counts.compras)}</div></div>
           <div class="totals-item"><div class="totals-label">Ventas</div><div class="totals-val">${F.number(counts.ventas)}</div></div>
+          ${counts.vazlo != null ? `<div class="totals-item"><div class="totals-label">Exist. Vazlo</div><div class="totals-val" style="color:var(--c-accent)">${F.number(counts.vazlo)}</div></div>` : ''}
         </div>
       </div>
+
+      ${vazloPanelHTML(d)}
 
       <div class="card mb-16">
         <div class="card-title">Comparativa de KPIs (nuevo vs actual)</div>

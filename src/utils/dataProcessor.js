@@ -215,6 +215,120 @@ window.DataProcessor = (function() {
     return out;
   }
 
+  /* ─── EXISTENCIA VAZLO (almacén del proveedor) ─────────
+     Parser tolerante: el archivo del proveedor puede venir con
+     distintos layouts. Estrategia:
+       1. Detectar columnas por encabezado ("Clave"/"Código"/"Artículo"
+          y "Existencia"/"Stock"/"Disponible"/"Cantidad").
+       2. Fallback: primera columna con SKUs válidos + primera columna
+          numérica a su derecha.
+     Devuelve { map: {clave → existencia}, filas } */
+  function loadVazlo(rows) {
+    let cClave = findCol(rows, ['clave', 'código', 'codigo', 'artículo', 'articulo', 'sku', 'parte', 'no. parte'], -1, 12);
+    let cExist = findCol(rows, ['existencia', 'exist', 'stock', 'disponible', 'cantidad', 'inventario'], -1, 12);
+
+    // Fallback estructural si no hay encabezados reconocibles
+    if (cClave < 0 || cExist < 0) {
+      const lim = Math.min(rows.length, 60);
+      const skuHits = {};
+      for (let i = 0; i < lim; i++) {
+        const r = rows[i];
+        if (!r) continue;
+        for (let j = 0; j < Math.min(r.length, 6); j++) {
+          if (r[j] == null) continue;
+          const s = String(r[j]).trim();
+          // Señal de SKU: alfanumérico válido, CON dígitos, corto (las
+          // descripciones son largas o no llevan dígitos) y NO numérico puro
+          // (los numéricos puros son ambiguos con columnas de cantidad).
+          if (esSKU(s) && /\d/.test(s) && s.length <= 14 && !/^\d+(\.\d+)?$/.test(s)) {
+            skuHits[j] = (skuHits[j] || 0) + 1;
+          }
+        }
+      }
+      if (cClave < 0) {
+        let best = 0, bestHits = -1;
+        Object.keys(skuHits).forEach(j => { if (skuHits[j] > bestHits) { bestHits = skuHits[j]; best = +j; } });
+        cClave = bestHits > 0 ? best : 0;
+      }
+      if (cExist < 0) {
+        // primera columna a la derecha de la clave con mayoría numérica
+        for (let j = cClave + 1; j < 12; j++) {
+          let nums = 0, filled = 0;
+          for (let i = 0; i < lim; i++) {
+            const r = rows[i];
+            if (!r || r[j] == null || String(r[j]).trim() === '') continue;
+            filled++;
+            if (!isNaN(parseFloat(String(r[j]).replace(/,/g, '')))) nums++;
+          }
+          if (filled > 3 && nums / filled > 0.8) { cExist = j; break; }
+        }
+        if (cExist < 0) cExist = cClave + 1;
+      }
+    }
+
+    const map = {};
+    let filas = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || r[cClave] == null) continue;
+      if (!esSKU(r[cClave])) continue;
+      const clave = String(r[cClave]).trim();
+      const raw = r[cExist];
+      if (raw == null || String(raw).trim() === '') continue;
+      // La celda de existencia debe ser numérica; descarta filas de
+      // encabezado ("Clave"/"Existencia") y filas de texto intercaladas.
+      if (typeof raw !== 'number' && isNaN(parseFloat(String(raw).replace(/,/g, '')))) continue;
+      const ex = toNum(raw);
+      // Si la clave se repite en el archivo, sumamos (multi-almacén del proveedor)
+      map[clave] = (map[clave] || 0) + Math.max(0, ex);
+      filas++;
+    }
+    return { map, filas };
+  }
+
+  /* Fusiona el mapa de existencia Vazlo dentro del arreglo master de
+     artículos. Devuelve stats de cruce { matched, sinMatch, conStock }. */
+  function mergeVazlo(master, vazloMap) {
+    let matched = 0, conStock = 0;
+    const claves = new Set(Object.keys(vazloMap));
+    master.forEach(m => {
+      if (claves.has(m.clave)) {
+        m.existencia_vazlo = Math.round(vazloMap[m.clave]);
+        matched++;
+        if (m.existencia_vazlo > 0) conStock++;
+        claves.delete(m.clave);
+      } else {
+        m.existencia_vazlo = 0; // dato cargado pero el proveedor no lista este SKU
+      }
+    });
+    return { matched, conStock, sinMatch: claves.size };
+  }
+
+  /* Parsea un File de existencia Vazlo de forma independiente (para
+     carga rápida en sesión desde Compra Inteligente). */
+  async function parseVazloFile(file) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: false });
+    return loadVazlo(readSheet(wb));
+  }
+
+  /* Aplica un mapa Vazlo al dataset EN SESIÓN (window.CEDI_DATA). */
+  function aplicarVazloEnSesion(vazloMap, nombreArchivo) {
+    if (!window.CEDI_DATA || !window.CEDI_DATA.articulos) return null;
+    const stats = mergeVazlo(window.CEDI_DATA.articulos, vazloMap);
+    window.CEDI_DATA.meta = window.CEDI_DATA.meta || {};
+    window.CEDI_DATA.meta.vazlo = {
+      cargado: true,
+      fecha_carga: new Date().toISOString().slice(0, 10),
+      archivo: nombreArchivo || 'EXISTENCIAVAZLO.xlsx',
+      claves_archivo: Object.keys(vazloMap).length,
+      matched: stats.matched,
+      con_stock: stats.conStock,
+      sin_match: stats.sinMatch
+    };
+    return stats;
+  }
+
   /* ─── Período dinámico ────────────────────────────────── */
   function calcularPeriodo(compras, corte) {
     const fechas = compras.map(c => c.fecha).filter(Boolean);
@@ -431,9 +545,36 @@ window.DataProcessor = (function() {
     const meta = {
       generado: new Date().toISOString().slice(0, 10),
       empresa: 'HARVIN DISTRIBUCIONES',
-      version_pipeline: '2.0.0-browser',
+      version_pipeline: '2.1.0-browser',
       ...periodo
     };
+
+    // ── EXISTENCIA VAZLO ──
+    // Prioridad 1: archivo nuevo cargado en esta corrida.
+    // Prioridad 2: conservar (carry-over) la existencia Vazlo del dataset
+    // vigente en sesión, para que actualizar los 5 reportes internos NO
+    // borre el dato del proveedor previamente cargado.
+    if (parsed.vazlo && parsed.vazlo.filas > 0) {
+      const stats = mergeVazlo(master, parsed.vazlo.map);
+      meta.vazlo = {
+        cargado: true,
+        fecha_carga: new Date().toISOString().slice(0, 10),
+        archivo: parsed.vazlo.nombre || 'EXISTENCIAVAZLO.xlsx',
+        claves_archivo: Object.keys(parsed.vazlo.map).length,
+        matched: stats.matched,
+        con_stock: stats.conStock,
+        sin_match: stats.sinMatch
+      };
+    } else if (window.CEDI_DATA && window.CEDI_DATA.meta && window.CEDI_DATA.meta.vazlo && window.CEDI_DATA.meta.vazlo.cargado && window.CEDI_DATA.articulos) {
+      const prevMap = {};
+      window.CEDI_DATA.articulos.forEach(a => {
+        if (a.existencia_vazlo != null) prevMap[a.clave] = a.existencia_vazlo;
+      });
+      if (Object.keys(prevMap).length) {
+        const stats = mergeVazlo(master, prevMap);
+        meta.vazlo = { ...window.CEDI_DATA.meta.vazlo, matched: stats.matched, con_stock: stats.conStock, carry_over: true };
+      }
+    }
 
     return { meta, kpis, abc, lineas, compras_mes, clientes, top50_articulos: top50, riesgo, articulos: master, top4_ids };
   }
@@ -454,9 +595,17 @@ window.DataProcessor = (function() {
       compras:   loadCompras(readSheet(await readWb(fileMap.COMPRAS)))
     };
 
+    // Archivo OPCIONAL: existencia del almacén del proveedor (Vazlo)
+    if (fileMap.VAZLO) {
+      const v = loadVazlo(readSheet(await readWb(fileMap.VAZLO)));
+      v.nombre = fileMap.VAZLO.name;
+      parsed.vazlo = v;
+    }
+
     const counts = {
       articulos: parsed.articulos.length, exival: parsed.exival.length,
-      rotinv: parsed.rotinv.length, ventas: parsed.ventas.length, compras: parsed.compras.length
+      rotinv: parsed.rotinv.length, ventas: parsed.ventas.length, compras: parsed.compras.length,
+      vazlo: parsed.vazlo ? Object.keys(parsed.vazlo.map).length : null
     };
 
     const dataset = buildDataset(parsed, corte);
@@ -474,5 +623,5 @@ window.DataProcessor = (function() {
     return blob;
   }
 
-  return { processFiles, buildDataset, generarArchivoJS, generarContenidoJS, calcularPeriodo };
+  return { processFiles, buildDataset, generarArchivoJS, generarContenidoJS, calcularPeriodo, parseVazloFile, aplicarVazloEnSesion, mergeVazlo };
 })();

@@ -103,7 +103,9 @@ window.CALC = (function() {
       score: art.score_compra || 0,
       pctAncla: art.pct_ancla || 0,
       dmd,
-      dpd
+      dpd,
+      // Existencia en el almacén del proveedor (Vazlo). null = sin dato cargado.
+      existenciaVazlo: (art.existencia_vazlo != null) ? art.existencia_vazlo : null
     };
   }
 
@@ -113,10 +115,23 @@ window.CALC = (function() {
      2. Ordenar por score de prioridad (desc)
      3. Asignar presupuesto en cascada
      4. Si queda presupuesto, escalar artículos A proporcionalmente
+
+     Modo Vazlo (usarVazlo=true):
+       · Cada artículo del pedido lleva existenciaVazlo (stock del
+         almacén del proveedor) y una clasificación de surtido:
+         'completo'  → el proveedor cubre TODO lo pedido
+         'parcial'   → el proveedor cubre solo una parte
+         'sin_stock' → el proveedor no tiene existencia
+       · Si limitarVazlo=true (modo agresivo): la cantidad a pedir se
+         TOPA a la existencia del proveedor y los artículos sin stock
+         Vazlo quedan fuera de la cascada, de modo que el presupuesto
+         se reasigna a mercancía que el proveedor SÍ puede surtir.
   ─────────────────────────────────────────────────────── */
   function optimizarPedido(articulos, params) {
     const { presupuesto, factorSS, diasCoberturaMeta, filtroABC, soloConDemanda } = params;
     const leadTimeDias = params.leadTimeDias != null ? params.leadTimeDias : params.leadTime;
+    const usarVazlo = !!params.usarVazlo;
+    const limitarVazlo = usarVazlo && !!params.limitarVazlo;
 
     let arts = articulos;
     if (soloConDemanda) arts = arts.filter(a => a.dpd > 0 && a.costo_iva > 0);
@@ -135,21 +150,52 @@ window.CALC = (function() {
     let presupuestoRestante = presupuesto;
     const pedido = [];
     let totalArts = 0, totalUnidades = 0, totalCosto = 0;
+    let excluidosVazlo = 0;     // arts con demanda pero sin stock del proveedor (solo modo limitar)
+    let recortadosVazlo = 0;    // arts cuya cantidad se topó al stock del proveedor
 
     for (const item of calculados) {
       if (presupuestoRestante <= 0) break;
       if (item.costoUnit <= 0) continue;
 
+      let topePedir = item.cantPedir;
+
+      // ── Modo agresivo: limitar al stock real del proveedor ──
+      if (limitarVazlo) {
+        const ev = item.existenciaVazlo || 0;
+        if (ev <= 0) { excluidosVazlo++; continue; } // el presupuesto se reasigna al siguiente
+        if (ev < topePedir) { topePedir = ev; recortadosVazlo++; }
+      }
+
       const maxAffordable = Math.floor(presupuestoRestante / item.costoUnit);
-      const cantFinal = Math.min(item.cantPedir, maxAffordable);
+      const cantFinal = Math.min(topePedir, maxAffordable);
 
       if (cantFinal > 0) {
         const costoFinal = cantFinal * item.costoUnit;
-        pedido.push({ ...item, cantFinal, costoFinal });
+        let surtido = null;
+        if (usarVazlo) {
+          const ev = item.existenciaVazlo || 0;
+          surtido = ev >= cantFinal ? 'completo' : (ev > 0 ? 'parcial' : 'sin_stock');
+        }
+        pedido.push({ ...item, cantFinal, costoFinal, surtido });
         presupuestoRestante -= costoFinal;
         totalArts++;
         totalUnidades += cantFinal;
         totalCosto += costoFinal;
+      }
+    }
+
+    // Estadísticas de surtido Vazlo
+    let vazloStats = null;
+    if (usarVazlo) {
+      vazloStats = { completo: 0, parcial: 0, sinStock: 0, costoSurtible: 0, udsSurtibles: 0, excluidos: excluidosVazlo, recortados: recortadosVazlo };
+      for (const it of pedido) {
+        const ev = it.existenciaVazlo || 0;
+        if (it.surtido === 'completo') vazloStats.completo++;
+        else if (it.surtido === 'parcial') vazloStats.parcial++;
+        else vazloStats.sinStock++;
+        const udsSurt = Math.min(it.cantFinal, ev);
+        vazloStats.udsSurtibles += udsSurt;
+        vazloStats.costoSurtible += udsSurt * it.costoUnit;
       }
     }
 
@@ -168,7 +214,10 @@ window.CALC = (function() {
       presupuestoUsado: totalCosto,
       presupuestoRestante,
       pctUsado: presupuesto > 0 ? (totalCosto / presupuesto * 100) : 0,
-      byABC
+      byABC,
+      usarVazlo,
+      limitarVazlo,
+      vazloStats
     };
   }
 
