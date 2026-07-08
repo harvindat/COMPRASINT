@@ -32,10 +32,17 @@ window.Auth = (function () {
   var SESSION_KEY = 'harvin_session_v1';
 
   // Páginas que requieren estar autenticado
-  var GATED = ['compra', 'actualizar', 'exportar'];
+  var GATED = ['compra', 'actualizar', 'exportar', 'usuarios'];
 
-  // -------- Tabla de usuarios (hashes PBKDF2, sin texto plano) --------
+  // -------- Tabla BASE de usuarios (hashes PBKDF2, sin texto plano) --------
   // perms: ['*'] = todo el sitio. De lo contrario, lista de páginas permitidas.
+  // Esta tabla se FUSIONA con window.CEDI_USERS (src/data/users_data.js),
+  // que administra el Super Usuario desde el panel "Usuarios":
+  //   · CEDI_USERS.users   → usuarios agregados (o contraseñas restablecidas)
+  //   · CEDI_USERS.removed → usuarios base desactivados
+  // El super usuario base (b3t0) es INMUTABLE: no puede eliminarse ni
+  // sobrescribirse desde el archivo dinámico, para evitar perder el acceso.
+  var PERMS_OPERADOR = ['dashboard', 'compra', 'abc', 'clientes', 'inventario', 'exportar', 'actualizar'];
   var USERS = {
     b3t0: {
       username: 'b3t0',
@@ -67,7 +74,42 @@ window.Auth = (function () {
     }
   };
 
-  // -------- Estado interno --------
+  // -------- Fusión con usuarios administrados (users_data.js) --------
+  function dynData() {
+    var d = window.CEDI_USERS;
+    if (!d || typeof d !== 'object') return { users: {}, removed: [] };
+    return { users: d.users || {}, removed: Array.isArray(d.removed) ? d.removed : [] };
+  }
+  function esSuperBase(username) {
+    var u = USERS[username];
+    return !!(u && u.roleKey === 'super');
+  }
+  /* Tabla EFECTIVA: base + agregados − eliminados. Los super base nunca
+     se eliminan ni se sobrescriben desde el archivo dinámico. */
+  function tabla() {
+    var dyn = dynData();
+    var out = {};
+    Object.keys(USERS).forEach(function (k) {
+      if (dyn.removed.indexOf(k) !== -1 && !esSuperBase(k)) return; // desactivado
+      out[k] = USERS[k];
+    });
+    Object.keys(dyn.users).forEach(function (k) {
+      if (esSuperBase(k)) return; // el super base es inmutable
+      var u = dyn.users[k];
+      if (!u || !u.saltB64 || !u.hashB64) return;
+      out[k] = {
+        username: k,
+        display: u.display || k,
+        role: u.role || 'Operador',
+        roleKey: u.roleKey === 'super' ? 'super' : 'operador',
+        saltB64: u.saltB64,
+        hashB64: u.hashB64,
+        perms: (u.roleKey === 'super') ? ['*'] : (Array.isArray(u.perms) && u.perms.length ? u.perms : PERMS_OPERADOR.slice())
+      };
+    });
+    return out;
+  }
+
   var attempts = {};          // { username: { count, until } }
   var changeCbs = [];
   var current = null;         // usuario en sesión (sin hash)
@@ -122,7 +164,7 @@ window.Auth = (function () {
       if (!raw) return null;
       var d = JSON.parse(raw);
       if (!d || !d.u || !d.exp || Date.now() > d.exp) { clearSession(); return null; }
-      var u = USERS[d.u];
+      var u = tabla()[d.u];
       if (!u) { clearSession(); return null; }
       return publicUser(u);
     } catch (e) { return null; }
@@ -148,7 +190,7 @@ window.Auth = (function () {
 
   function login(username, password) {
     username = (username || '').trim().toLowerCase();
-    var u = USERS[username];
+    var u = tabla()[username];
 
     // Bloqueo por intentos
     var st = attempts[username];
@@ -199,6 +241,54 @@ window.Auth = (function () {
     current = loadSession();
   }
 
+  // -------- API de administración (panel Usuarios, solo Super) --------
+  function isSuper() { return !!(current && current.roleKey === 'super'); }
+
+  /* Lista pública de usuarios para el panel: efectivos + base desactivados.
+     Nunca expone hashes. */
+  function listUsers() {
+    var dyn = dynData();
+    var t = tabla();
+    var out = [];
+    Object.keys(t).forEach(function (k) {
+      var u = t[k];
+      out.push({
+        username: k, display: u.display, role: u.role, roleKey: u.roleKey,
+        origen: USERS[k] && !dyn.users[k] ? 'base' : (USERS[k] ? 'base+reset' : 'agregado'),
+        activo: true,
+        protegido: esSuperBase(k),        // b3t0: inmutable
+        esSesion: !!(current && current.username === k)
+      });
+    });
+    // Usuarios base desactivados (para poder restaurarlos)
+    dyn.removed.forEach(function (k) {
+      if (!USERS[k] || esSuperBase(k) || t[k]) return;
+      var u = USERS[k];
+      out.push({ username: k, display: u.display, role: u.role, roleKey: u.roleKey,
+                 origen: 'base', activo: false, protegido: false, esSesion: false });
+    });
+    return out;
+  }
+
+  /* Deriva PBKDF2 para un usuario nuevo: sal aleatoria de 16 bytes +
+     150k iteraciones (mismos parámetros que la tabla base). La contraseña
+     NUNCA se guarda ni viaja: solo sal y hash. */
+  function hashPassword(password) {
+    if (!cryptoOk()) return Promise.reject(new Error('Web Crypto no disponible. Usa HTTPS y un navegador moderno.'));
+    var salt = new Uint8Array(16);
+    crypto.getRandomValues(salt);
+    return derive(password, salt).then(function (bits) {
+      return { saltB64: bytesToB64(salt), hashB64: bytesToB64(new Uint8Array(bits)) };
+    });
+  }
+
+  /* Re-valida la sesión vigente contra la tabla efectiva (p. ej. tras
+     aplicar cambios de usuarios) y notifica a la UI. */
+  function refreshUsers() {
+    current = loadSession();
+    emitChange();
+  }
+
   return {
     init: init,
     login: login,
@@ -208,7 +298,13 @@ window.Auth = (function () {
     can: can,
     isGated: isGated,
     onChange: onChange,
-    GATED: GATED
+    GATED: GATED,
+    // Administración de usuarios (panel exclusivo del Super Usuario)
+    isSuper: isSuper,
+    listUsers: listUsers,
+    hashPassword: hashPassword,
+    refreshUsers: refreshUsers,
+    PERMS_OPERADOR: PERMS_OPERADOR.slice()
   };
 })();
 
@@ -352,6 +448,12 @@ window.AuthUI = (function () {
 
   // Marca los items de navegación bloqueados con un candado
   function refreshNavLocks() {
+    // El panel de Usuarios es EXCLUSIVO del Super Usuario: se oculta por
+    // completo para invitados y operadores (no solo candado).
+    var navUsuarios = document.querySelector('.nav-item[data-page="usuarios"]');
+    if (navUsuarios) {
+      navUsuarios.style.display = (window.Auth.isLoggedIn() && window.Auth.can('usuarios')) ? '' : 'none';
+    }
     document.querySelectorAll('.nav-item').forEach(function (btn) {
       var page = btn.dataset.page;
       var lock = btn.querySelector('.nav-lock');

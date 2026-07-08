@@ -41,8 +41,8 @@ window.GitHubSync = (function () {
     return btoa(bin);
   }
 
-  function apiBase() {
-    return 'https://api.github.com/repos/' + CONFIG.owner + '/' + CONFIG.repo + '/contents/' + CONFIG.path;
+  function apiBase(path) {
+    return 'https://api.github.com/repos/' + CONFIG.owner + '/' + CONFIG.repo + '/contents/' + (path || CONFIG.path);
   }
 
   function headers(token) {
@@ -54,8 +54,8 @@ window.GitHubSync = (function () {
   }
 
   // Obtiene el SHA actual del archivo (necesario para sobrescribir).
-  function getCurrentSha(token) {
-    var url = apiBase() + '?ref=' + encodeURIComponent(CONFIG.branch);
+  function getCurrentSha(token, path) {
+    var url = apiBase(path) + '?ref=' + encodeURIComponent(CONFIG.branch);
     return fetch(url, { headers: headers(token) }).then(function (res) {
       if (res.status === 200) {
         return res.json().then(function (j) { return j.sha; });
@@ -68,26 +68,28 @@ window.GitHubSync = (function () {
   }
 
   /*
-    commit(token, contenido, mensaje)
+    commitFile(token, path, contenido, mensaje)
       token     : PAT del usuario (solo en memoria)
-      contenido : string completo del nuevo cedi_data.js
+      path      : ruta del archivo dentro del repo (ej. 'src/data/users_data.js');
+                  si es null usa CONFIG.path (cedi_data.js)
+      contenido : string completo del archivo nuevo
       mensaje   : mensaje de commit
     Devuelve Promise<{ ok, commitUrl, sha, error }>
   */
-  function commit(token, contenido, mensaje) {
+  function commitFile(token, path, contenido, mensaje) {
     token = (token || '').trim();
     if (!token) return Promise.resolve({ ok: false, error: 'Falta el token de GitHub.' });
     if (!contenido) return Promise.resolve({ ok: false, error: 'No hay datos procesados para guardar.' });
 
-    return getCurrentSha(token).then(function (sha) {
+    return getCurrentSha(token, path).then(function (sha) {
       var body = {
-        message: mensaje || ('Actualizar cedi_data.js — ' + new Date().toISOString()),
+        message: mensaje || ('Actualizar ' + (path || CONFIG.path) + ' — ' + new Date().toISOString()),
         content: utf8ToB64(contenido),
         branch: CONFIG.branch
       };
       if (sha) body.sha = sha; // si existe, lo sobrescribimos
 
-      return fetch(apiBase(), {
+      return fetch(apiBase(path), {
         method: 'PUT',
         headers: Object.assign({ 'Content-Type': 'application/json' }, headers(token)),
         body: JSON.stringify(body)
@@ -112,5 +114,10 @@ window.GitHubSync = (function () {
     });
   }
 
-  return { commit: commit, getConfig: getConfig, setConfig: setConfig };
+  /* Compatibilidad: commit() sigue apuntando a cedi_data.js */
+  function commit(token, contenido, mensaje) {
+    return commitFile(token, null, contenido, mensaje);
+  }
+
+  return { commit: commit, commitFile: commitFile, getConfig: getConfig, setConfig: setConfig };
 })();

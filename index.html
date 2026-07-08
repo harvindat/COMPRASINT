@@ -41,6 +41,9 @@
         <button class="nav-item" data-page="actualizar">
           <span class="nav-icon">⟳</span> Actualizar Datos
         </button>
+        <button class="nav-item" data-page="usuarios" style="display:none">
+          <span class="nav-icon">◈</span> Usuarios
+        </button>
       </nav>
       <div class="user-box" id="user-box"></div>
       <div class="sidebar-footer">
@@ -57,6 +60,7 @@
       <div id="page-inventario" class="page"></div>
       <div id="page-exportar" class="page"></div>
       <div id="page-actualizar" class="page"></div>
+      <div id="page-usuarios" class="page"></div>
     </main>
   </div>
 
@@ -74,7 +78,8 @@
   <script src="src/components/inventario.js"></script>
   <script src="src/components/exportar.js"></script>
   <script src="src/components/actualizar.js"></script>
-  <!-- Bootstrap: carga cedi_data.js SIN caché (datos siempre frescos) y luego arranca app.js -->
+  <script src="src/components/usuarios.js"></script>
+  <!-- Bootstrap: carga users_data.js y cedi_data.js SIN caché (datos siempre frescos) y luego arranca app.js -->
   <script src="src/bootstrap.js"></script>
 </body>
 </html>

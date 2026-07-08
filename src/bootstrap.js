@@ -18,6 +18,7 @@
 (function () {
   'use strict';
 
+  var USERS_URL = 'src/data/users_data.js';
   var DATA_URL = 'src/data/cedi_data.js';
   var APP_URL  = 'src/app.js';
   var v = Date.now(); // sello único por carga → ignora cachés intermedios
@@ -50,12 +51,21 @@
     });
   }
 
-  // 1) Cargar datos SIN caché (URL única por carga).
-  inject(DATA_URL + '?t=' + v, arrancarApp, function () {
-    // Fallback: reintento sin query (p. ej. al abrir como archivo local
-    // file://, donde algunos navegadores rechazan el query en file URLs).
-    inject(DATA_URL, arrancarApp, function () {
-      mostrarError('No se pudo cargar el archivo de datos (cedi_data.js).');
+  function cargarDatos() {
+    // 2) Cargar datos SIN caché (URL única por carga).
+    inject(DATA_URL + '?t=' + v, arrancarApp, function () {
+      // Fallback: reintento sin query (p. ej. al abrir como archivo local
+      // file://, donde algunos navegadores rechazan el query en file URLs).
+      inject(DATA_URL, arrancarApp, function () {
+        mostrarError('No se pudo cargar el archivo de datos (cedi_data.js).');
+      });
     });
+  }
+
+  // 1) Cargar usuarios administrados SIN caché. Es tolerante a fallos:
+  //    si el archivo no existe o no carga, auth.js opera solo con la
+  //    tabla base (window.CEDI_USERS queda undefined y dynData lo maneja).
+  inject(USERS_URL + '?t=' + v, cargarDatos, function () {
+    inject(USERS_URL, cargarDatos, cargarDatos);
   });
 })();

@@ -13,7 +13,8 @@
     clientes:  window.PageClientes,
     inventario:window.PageInventario,
     exportar:  window.PageExportar,
-    actualizar:window.PageActualizar
+    actualizar:window.PageActualizar,
+    usuarios:  window.PageUsuarios
   };
 
   let currentPage = null;
@@ -22,6 +23,7 @@
     var label = (pageId === 'compra') ? 'Compra Inteligente'
               : (pageId === 'actualizar') ? 'Actualizar Datos'
               : (pageId === 'exportar') ? 'Exportar'
+              : (pageId === 'usuarios') ? 'el panel de Usuarios'
               : 'esta sección';
     if (!loggedIn) {
       return '<div class="locked-panel">' +
@@ -134,7 +136,7 @@
     // Keyboard shortcuts
     document.addEventListener('keydown', e => {
       if (e.altKey) {
-        const map = { '1':'dashboard','2':'compra','3':'abc','4':'clientes','5':'inventario','6':'exportar','7':'actualizar' };
+        const map = { '1':'dashboard','2':'compra','3':'abc','4':'clientes','5':'inventario','6':'exportar','7':'actualizar','8':'usuarios' };
         if (map[e.key]) { e.preventDefault(); navigate(map[e.key]); }
       }
     });
