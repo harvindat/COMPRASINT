@@ -329,6 +329,27 @@ window.DataProcessor = (function() {
     return stats;
   }
 
+  /* Genera un dataset NUEVO (clonado del vigente en sesión) con la
+     existencia Vazlo fusionada. Permite actualizar SOLO el archivo del
+     proveedor desde Actualizar Datos y guardarlo en GitHub sin tener
+     que volver a cargar los 5 reportes internos. */
+  function datasetConVazlo(vazloMap, nombreArchivo) {
+    if (!window.CEDI_DATA || !window.CEDI_DATA.articulos) return null;
+    const dataset = JSON.parse(JSON.stringify(window.CEDI_DATA));
+    const stats = mergeVazlo(dataset.articulos, vazloMap);
+    dataset.meta = dataset.meta || {};
+    dataset.meta.vazlo = {
+      cargado: true,
+      fecha_carga: new Date().toISOString().slice(0, 10),
+      archivo: nombreArchivo || 'EXISTENCIAVAZLO.xlsx',
+      claves_archivo: Object.keys(vazloMap).length,
+      matched: stats.matched,
+      con_stock: stats.conStock,
+      sin_match: stats.sinMatch
+    };
+    return { dataset, stats };
+  }
+
   /* ─── Período dinámico ────────────────────────────────── */
   function calcularPeriodo(compras, corte) {
     const fechas = compras.map(c => c.fecha).filter(Boolean);
@@ -623,5 +644,5 @@ window.DataProcessor = (function() {
     return blob;
   }
 
-  return { processFiles, buildDataset, generarArchivoJS, generarContenidoJS, calcularPeriodo, parseVazloFile, aplicarVazloEnSesion, mergeVazlo };
+  return { processFiles, buildDataset, generarArchivoJS, generarContenidoJS, calcularPeriodo, parseVazloFile, aplicarVazloEnSesion, mergeVazlo, datasetConVazlo };
 })();

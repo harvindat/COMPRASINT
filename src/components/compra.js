@@ -270,14 +270,15 @@ window.PageCompra = (function() {
         <div style="font-size:11px;color:var(--c-text3);margin-top:8px">
           ¿Archivo nuevo del proveedor?
           <label style="cursor:pointer;color:var(--c-accent);text-decoration:underline">Reemplazar en sesión<input type="file" id="file-vazlo-inline" accept=".xlsx,.xls" style="display:none"></label>
-          · Para hacerlo permanente usa <strong>Actualizar Datos → Guardar en GitHub</strong>.
+          · Para hacerlo permanente usa <strong>Actualizar Datos → Guardar en GitHub</strong> (puedes subir solo este archivo, sin los otros 5).
         </div>`;
     }
     return `
       <div class="control-label">Existencia del proveedor (Vazlo)</div>
       <div style="font-size:12px;color:var(--c-text2);margin-top:4px;line-height:1.6">
         Aún no hay existencia del proveedor cargada. Cárgala aquí para validar qué artículos del pedido
-        <strong>sí puede surtir el proveedor</strong>, o hazlo desde <strong>Actualizar Datos</strong> para guardarla en GitHub.
+        <strong>sí puede surtir el proveedor</strong>, o hazlo desde <strong>Actualizar Datos</strong> (puedes subir solo ese archivo)
+        para guardarla en GitHub y que quede habilitada de forma permanente.
       </div>
       <label class="btn btn-outline btn-sm" style="cursor:pointer;margin-top:8px;display:inline-block">
         ⛁ Cargar EXISTENCIAVAZLO.xlsx (solo esta sesión)

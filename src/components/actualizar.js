@@ -15,12 +15,14 @@ window.PageActualizar = (function() {
     { key: 'VAZLO',      label: 'Existencia proveedor (Vazlo)', hint: 'EXISTENCIAVAZLO.xlsx', icon: '⛁', optional: true },
   ];
 
-  let files = {};        // { KEY: File }
-  let resultado = null;  // dataset procesado
+  let files = {};          // { KEY: File }
+  let resultado = null;    // dataset procesado
+  let modoSoloVazlo = false; // true cuando solo se actualiza la existencia del proveedor
 
   function render() {
     files = {};
     resultado = null;
+    modoSoloVazlo = false;
     const html = `
       <div class="page-header">
         <div class="page-title">Actualizar Datos</div>
@@ -31,6 +33,7 @@ window.PageActualizar = (function() {
         <div class="card-title">Cómo funciona</div>
         <div style="font-size:13px;color:var(--c-text2);line-height:1.7">
           <p>1. Exporta los 5 reportes del sistema en el mismo formato que los archivos originales. Opcionalmente agrega el archivo de <strong>existencia del proveedor (Vazlo)</strong> para habilitar la validación de surtido en Compra Inteligente.</p>
+          <p class="mt-4" style="color:var(--c-text);"><strong>Actualización rápida:</strong> si SOLO quieres actualizar la existencia del proveedor, carga únicamente <code>EXISTENCIAVAZLO.xlsx</code> — no necesitas los otros 5 archivos. Se cruza contra el catálogo vigente y podrás guardarlo en GitHub igual que siempre.</p>
           <p class="mt-4">2. Arrastra o selecciona cada archivo en su casilla. El sistema detecta automáticamente el período (semanas o meses) a partir de las fechas en COMPRAS. Si ya habías cargado existencia Vazlo antes y no subes una nueva, el dato anterior se conserva.</p>
           <p class="mt-4">3. Presiona <strong>Procesar</strong> para validar y previsualizar los nuevos KPIs.</p>
           <p class="mt-4">4. Aplica los cambios para actualizar el dashboard en la sesión actual, o descarga el nuevo <code>cedi_data.js</code> para reemplazar el archivo en el proyecto de forma permanente.</p>
@@ -63,9 +66,12 @@ window.PageActualizar = (function() {
   function slotHTML(s) {
     const optTag = s.optional ? ' <span style="font-size:10px;color:var(--c-text3);border:1px solid var(--c-border);border-radius:4px;padding:1px 5px;vertical-align:middle">OPCIONAL</span>' : '';
     const prevVazlo = s.key === 'VAZLO' && window.CEDI_DATA && window.CEDI_DATA.meta && window.CEDI_DATA.meta.vazlo && window.CEDI_DATA.meta.vazlo.cargado;
-    const baseStatus = prevVazlo
+    const soloTag = s.key === 'VAZLO'
+      ? '<br><span style="color:var(--c-accent);font-size:11px">Se puede cargar solo, sin los otros 5 archivos</span>'
+      : '';
+    const baseStatus = (prevVazlo
       ? `Dato vigente del ${window.CEDI_DATA.meta.vazlo.fecha_carga} · si no cargas uno nuevo, se conserva`
-      : `Esperando archivo · <span class="mono">${s.hint}</span>`;
+      : `Esperando archivo · <span class="mono">${s.hint}</span>`) + soloTag;
     return `
       <div class="export-card slot-card" data-slot="${s.key}" id="slot-${s.key}" ${s.optional ? 'style="border-style:dashed"' : ''}>
         <div class="export-icon">${s.icon}</div>
@@ -115,10 +121,41 @@ window.PageActualizar = (function() {
     const card = document.getElementById('slot-' + key);
     if (card) card.style.borderColor = 'var(--c-green)';
 
-    // Habilitar procesar si están los 5 obligatorios (VAZLO es opcional)
-    const allLoaded = SLOTS.filter(s => !s.optional).every(s => files[s.key]);
+    actualizarBotonProcesar();
+  }
+
+  /* Habilita "Procesar" en dos escenarios:
+       a) Los 5 archivos obligatorios están cargados (flujo completo).
+       b) SOLO está el archivo Vazlo y hay dataset base en sesión →
+          modo de actualización aislada de existencia del proveedor. */
+  function actualizarBotonProcesar() {
+    const oblig = SLOTS.filter(s => !s.optional);
+    const numOblig = oblig.filter(s => files[s.key]).length;
+    const allLoaded = numOblig === oblig.length;
+    const soloVazlo = !!files.VAZLO && numOblig === 0 &&
+                      window.CEDI_DATA && Array.isArray(window.CEDI_DATA.articulos) && window.CEDI_DATA.articulos.length > 0;
+    modoSoloVazlo = soloVazlo && !allLoaded;
+
     const btn = document.getElementById('btn-procesar');
-    if (btn) btn.disabled = !allLoaded;
+    if (btn) {
+      btn.disabled = !(allLoaded || soloVazlo);
+      btn.textContent = labelProcesar();
+    }
+    // Hint contextual bajo los botones
+    const status = document.getElementById('proceso-status');
+    if (status && !resultado) {
+      if (modoSoloVazlo) {
+        status.innerHTML = `<div class="card mb-16" style="border-left:3px solid var(--c-accent)"><div style="font-size:12px;color:var(--c-text2)">⛁ <strong>Modo actualización rápida:</strong> se procesará SOLO la existencia del proveedor y se cruzará contra el catálogo vigente en sesión. Los demás datos (ventas, compras, inventario) no cambian.</div></div>`;
+      } else if (!allLoaded && files.VAZLO && numOblig > 0) {
+        status.innerHTML = `<div class="card mb-16" style="border-left:3px solid #d9a441"><div style="font-size:12px;color:var(--c-text2)">Para procesar necesitas <strong>los 5 archivos obligatorios completos</strong>, o bien <strong>únicamente</strong> el de existencia Vazlo (quita los demás para usar la actualización rápida).</div></div>`;
+      } else {
+        status.innerHTML = '';
+      }
+    }
+  }
+
+  function labelProcesar() {
+    return modoSoloVazlo ? '⛁ Procesar solo existencia Vazlo' : '⟁ Procesar archivos';
   }
 
   async function procesar() {
@@ -127,20 +164,89 @@ window.PageActualizar = (function() {
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Procesando…'; }
     if (status) status.innerHTML = `<div class="card mb-16"><div class="loading-msg">Procesando archivos Excel… esto puede tardar unos segundos.</div></div>`;
 
-    const corteEl = document.getElementById('fecha-corte');
-    const corte = corteEl && corteEl.value ? corteEl.value : null;
-
     try {
-      const { dataset, counts } = await window.DataProcessor.processFiles(files, corte);
-      resultado = dataset;
-      renderPreview(dataset, counts);
+      if (modoSoloVazlo) {
+        await procesarSoloVazlo();
+      } else {
+        const corteEl = document.getElementById('fecha-corte');
+        const corte = corteEl && corteEl.value ? corteEl.value : null;
+        const { dataset, counts } = await window.DataProcessor.processFiles(files, corte);
+        resultado = dataset;
+        renderPreview(dataset, counts);
+      }
       if (status) status.innerHTML = '';
     } catch (e) {
       console.error('Error procesando:', e);
       if (status) status.innerHTML = `<div class="card mb-16" style="border-left:3px solid var(--c-red)"><div class="card-title" style="color:var(--c-red)">Error al procesar</div><div style="font-size:13px;color:var(--c-text2)">${e.message}<br><br>Verifica que los archivos tengan el mismo formato que los originales (mismas columnas y estructura).</div></div>`;
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '⟁ Procesar archivos'; }
+      if (btn) { btn.disabled = false; btn.textContent = labelProcesar(); }
     }
+  }
+
+  /* ─── Flujo aislado: SOLO existencia del proveedor ──────
+     Cruza el archivo Vazlo contra el dataset vigente en sesión
+     (sin reprocesar los 5 reportes internos) y deja el resultado
+     listo para Aplicar / Guardar en GitHub / Descargar. */
+  async function procesarSoloVazlo() {
+    const f = files.VAZLO;
+    if (!f) throw new Error('No hay archivo de existencia Vazlo seleccionado.');
+    const parsedV = await window.DataProcessor.parseVazloFile(f);
+    if (!parsedV.filas) {
+      throw new Error('No se detectaron claves con existencia en el archivo del proveedor. Verifica que tenga columnas de clave y existencia.');
+    }
+    const res = window.DataProcessor.datasetConVazlo(parsedV.map, f.name);
+    if (!res) throw new Error('No hay dataset base cargado en la sesión. Recarga la página o procesa primero los 5 archivos.');
+    resultado = res.dataset;
+    renderPreviewSoloVazlo(res.dataset, f.name);
+  }
+
+  function renderPreviewSoloVazlo(d, nombreArchivo) {
+    const F = window.FMT;
+    const v = d.meta.vazlo;
+    const preview = document.getElementById('preview-resultado');
+    preview.innerHTML = `
+      <div class="result-panel mb-16">
+        <div class="rp-label">Existencia Vazlo procesada · ${nombreArchivo}</div>
+        <div class="rp-value" style="font-size:24px">${F.number(v.matched)} claves cruzadas</div>
+        <div class="rp-sub">Dataset base sin cambios · Período vigente: ${d.meta.periodo || '—'} · Corte: ${d.meta.fecha_corte || '—'}</div>
+        <div class="rp-grid">
+          <div><div class="rp-item-label">Claves en archivo</div><div class="rp-item-val">${F.number(v.claves_archivo)}</div></div>
+          <div><div class="rp-item-label">Con stock proveedor</div><div class="rp-item-val" style="color:var(--c-green)">${F.number(v.con_stock)}</div></div>
+          <div><div class="rp-item-label">Sin cruce (no en catálogo)</div><div class="rp-item-val">${F.number(v.sin_match)}</div></div>
+        </div>
+      </div>
+
+      <div class="card mb-16" style="border-left:3px solid var(--c-accent)">
+        <div class="card-title">Solo se actualiza la existencia del proveedor</div>
+        <div style="font-size:13px;color:var(--c-text2);line-height:1.7">
+          Ventas, compras, inventario y KPIs <strong>no cambian</strong> — se conserva el dataset vigente y únicamente se
+          reemplaza la existencia Vazlo. Al guardar en GitHub, el dato viaja dentro de <code>cedi_data.js</code> y
+          la próxima vez que abras el sistema, <strong>Compra Inteligente</strong> tendrá el selector de modos Vazlo
+          habilitado automáticamente para recalcular el pedido.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Aplicar cambios</div>
+        <div style="font-size:13px;color:var(--c-text2);line-height:1.6;margin-bottom:14px">
+          <strong>Aplicar en sesión:</strong> actualiza la existencia Vazlo ahora mismo (temporal, hasta recargar la página).<br>
+          <strong>Guardar en GitHub:</strong> hace commit del <code>cedi_data.js</code> con la nueva existencia Vazlo. Te pedirá tu token de GitHub (no se guarda en ningún lado).<br>
+          <strong>Descargar cedi_data.js:</strong> guarda el archivo para reemplazarlo manualmente en <code>src/data/</code>.
+        </div>
+        <div class="btn-row" style="margin-bottom:0">
+          <button class="btn btn-green" id="btn-aplicar">✓ Aplicar en sesión</button>
+          <button class="btn btn-primary" id="btn-guardar-github">⬆ Guardar en GitHub</button>
+          <button class="btn btn-outline" id="btn-descargar-js">↓ Descargar cedi_data.js</button>
+        </div>
+      </div>
+    `;
+
+    const btnAplicar = document.getElementById('btn-aplicar');
+    if (btnAplicar) btnAplicar.addEventListener('click', aplicarSesion);
+    const btnGithub = document.getElementById('btn-guardar-github');
+    if (btnGithub) btnGithub.addEventListener('click', abrirModalGitHub);
+    const btnDescargar = document.getElementById('btn-descargar-js');
+    if (btnDescargar) btnDescargar.addEventListener('click', descargarJS);
   }
 
   function vazloPanelHTML(d) {
@@ -257,11 +363,15 @@ window.PageActualizar = (function() {
     } catch (e) {}
 
     const status = document.getElementById('proceso-status');
-    if (status) status.innerHTML = `<div class="card mb-16" style="border-left:3px solid var(--c-green)"><div style="font-size:13px;color:var(--c-green-text)">✓ Datos aplicados a la sesión actual. <a href="#" id="ir-dashboard" style="color:var(--c-green-text);font-weight:600;text-decoration:underline">Ver el Dashboard actualizado →</a> Para hacer los cambios permanentes, descarga el archivo cedi_data.js y reemplázalo en <code>src/data/</code>.</div></div>`;
-    const link = document.getElementById('ir-dashboard');
+    if (status) {
+      status.innerHTML = modoSoloVazlo
+        ? `<div class="card mb-16" style="border-left:3px solid var(--c-green)"><div style="font-size:13px;color:var(--c-green-text)">✓ Existencia Vazlo aplicada a la sesión actual. <a href="#" id="ir-destino" style="color:var(--c-green-text);font-weight:600;text-decoration:underline">Ir a Compra Inteligente para recalcular →</a> Para hacerla permanente usa <strong>Guardar en GitHub</strong>.</div></div>`
+        : `<div class="card mb-16" style="border-left:3px solid var(--c-green)"><div style="font-size:13px;color:var(--c-green-text)">✓ Datos aplicados a la sesión actual. <a href="#" id="ir-destino" style="color:var(--c-green-text);font-weight:600;text-decoration:underline">Ver el Dashboard actualizado →</a> Para hacer los cambios permanentes, descarga el archivo cedi_data.js y reemplázalo en <code>src/data/</code>.</div></div>`;
+    }
+    const link = document.getElementById('ir-destino');
     if (link) link.addEventListener('click', e => {
       e.preventDefault();
-      if (window.App && window.App.navigate) window.App.navigate('dashboard');
+      if (window.App && window.App.navigate) window.App.navigate(modoSoloVazlo ? 'compra' : 'dashboard');
     });
   }
 
@@ -310,7 +420,7 @@ window.PageActualizar = (function() {
           </div>
           <div class="auth-field">
             <label for="gh-msg">Mensaje de commit (opcional)</label>
-            <input id="gh-msg" type="text" value="Actualizar datos CEDI · ${resultado.meta.periodo}" />
+            <input id="gh-msg" type="text" value="${modoSoloVazlo ? 'Actualizar existencia Vazlo (proveedor) · ' + (resultado.meta.vazlo && resultado.meta.vazlo.fecha_carga || '') : 'Actualizar datos CEDI · ' + resultado.meta.periodo}" />
           </div>
           <button class="btn btn-primary auth-submit" id="gh-submit">Guardar en el repositorio</button>
         </div>
