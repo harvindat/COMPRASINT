@@ -127,67 +127,84 @@ window.CALC = (function() {
          Vazlo quedan fuera de la cascada, de modo que el presupuesto
          se reasigna a mercancía que el proveedor SÍ puede surtir.
   ─────────────────────────────────────────────────────── */
-  function optimizarPedido(articulos, params) {
-    const { presupuesto, factorSS, diasCoberturaMeta, filtroABC, soloConDemanda } = params;
-    const leadTimeDias = params.leadTimeDias != null ? params.leadTimeDias : params.leadTime;
-    const usarVazlo = !!params.usarVazlo;
-    const limitarVazlo = usarVazlo && !!params.limitarVazlo;
+  /* ─── MEDIANA DE ROTACIÓN POR CLASE ABC ────────────────
+     Se usa para definir "rápido-movedor": un artículo cuya rotación
+     está por encima de la mediana de su propia clase. Así el umbral
+     es relativo (una A rápida no se compara contra una C rápida). */
+  function medianaRotacionPorClase(articulos) {
+    const byClass = { A: [], B: [], C: [], D: [] };
+    articulos.forEach(a => {
+      const c = a.abc || 'D';
+      if (byClass[c] && (a.rotacion || 0) > 0) byClass[c].push(a.rotacion);
+    });
+    const med = {};
+    Object.keys(byClass).forEach(c => {
+      const arr = byClass[c].sort((x, y) => x - y);
+      if (!arr.length) { med[c] = 0; return; }
+      const mid = Math.floor(arr.length / 2);
+      med[c] = arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+    });
+    return med;
+  }
 
-    let arts = articulos;
-    if (soloConDemanda) arts = arts.filter(a => a.dpd > 0 && a.costo_iva > 0);
-    if (filtroABC && filtroABC.length > 0) arts = arts.filter(a => filtroABC.includes(a.abc));
-
-    // Normalizar params para que calcularArticulo siempre reciba leadTimeDias
-    const paramsNorm = { ...params, leadTimeDias };
-
-    // Calcular pedido ideal por artículo
-    const calculados = arts.map(a => calcularArticulo(a, paramsNorm)).filter(r => r.cantPedir > 0);
-
-    // Ordenar por score descendente
-    calculados.sort((a, b) => b.score - a.score);
-
-    // Asignar presupuesto en cascada
-    let presupuestoRestante = presupuesto;
+  /* ─── FINANCIAR UNA LISTA CONTRA UNA BOLSA DE PRESUPUESTO ─
+     Núcleo compartido por la cascada plana y por cada tramo del
+     modo blindaje. Recorre los items (ya ordenados) y asigna la
+     bolsa en cascada, respetando los modos Vazlo. Devuelve el
+     pedido financiado, lo que sobró de la bolsa (rollover) y el
+     conteo de lo que quedó FUERA por falta de presupuesto.
+       ctx = { usarVazlo, limitarVazlo, tramo }                      */
+  function financiarLista(items, bolsa, ctx) {
     const pedido = [];
-    let totalArts = 0, totalUnidades = 0, totalCosto = 0;
-    let excluidosVazlo = 0;     // arts con demanda pero sin stock del proveedor (solo modo limitar)
-    let recortadosVazlo = 0;    // arts cuya cantidad se topó al stock del proveedor
+    let restante = bolsa;
+    let costo = 0, uds = 0, arts = 0;
+    let excluidosVazlo = 0, recortadosVazlo = 0;
+    let fueraArts = 0, fueraCosto = 0;
 
-    for (const item of calculados) {
-      if (presupuestoRestante <= 0) break;
+    for (const item of items) {
       if (item.costoUnit <= 0) continue;
-
       let topePedir = item.cantPedir;
 
-      // ── Modo agresivo: limitar al stock real del proveedor ──
-      if (limitarVazlo) {
+      // Modo agresivo: topar a la existencia del proveedor
+      if (ctx.limitarVazlo) {
         const ev = item.existenciaVazlo || 0;
-        if (ev <= 0) { excluidosVazlo++; continue; } // el presupuesto se reasigna al siguiente
+        if (ev <= 0) { excluidosVazlo++; continue; }
         if (ev < topePedir) { topePedir = ev; recortadosVazlo++; }
       }
 
-      const maxAffordable = Math.floor(presupuestoRestante / item.costoUnit);
+      const maxAffordable = restante > 0 ? Math.floor(restante / item.costoUnit) : 0;
       const cantFinal = Math.min(topePedir, maxAffordable);
 
       if (cantFinal > 0) {
         const costoFinal = cantFinal * item.costoUnit;
         let surtido = null;
-        if (usarVazlo) {
+        if (ctx.usarVazlo) {
           const ev = item.existenciaVazlo || 0;
           surtido = ev >= cantFinal ? 'completo' : (ev > 0 ? 'parcial' : 'sin_stock');
         }
-        pedido.push({ ...item, cantFinal, costoFinal, surtido });
-        presupuestoRestante -= costoFinal;
-        totalArts++;
-        totalUnidades += cantFinal;
-        totalCosto += costoFinal;
+        pedido.push({ ...item, cantFinal, costoFinal, surtido, tramo: ctx.tramo });
+        restante -= costoFinal; costo += costoFinal; uds += cantFinal; arts++;
+      } else {
+        // No alcanzó ni una unidad con la bolsa disponible → fuera por presupuesto
+        fueraArts++; fueraCosto += topePedir * item.costoUnit;
       }
     }
 
-    // Estadísticas de surtido Vazlo
+    return { pedido, restante, costo, uds, arts, excluidosVazlo, recortadosVazlo, fueraArts, fueraCosto };
+  }
+
+  /* ─── ARMAR RESULTADO ESTÁNDAR ─────────────────────────
+     Toma el pedido consolidado + acumulados y produce el objeto
+     de salida idéntico en forma para plana y blindada (para que
+     la UI y el export no distingan entre modos).                 */
+  function armarResultado(pedido, presupuesto, presupuestoRestante, ctx, extra) {
+    const totalCosto = pedido.reduce((s, i) => s + i.costoFinal, 0);
+    const totalUnidades = pedido.reduce((s, i) => s + i.cantFinal, 0);
+
     let vazloStats = null;
-    if (usarVazlo) {
-      vazloStats = { completo: 0, parcial: 0, sinStock: 0, costoSurtible: 0, udsSurtibles: 0, excluidos: excluidosVazlo, recortados: recortadosVazlo };
+    if (ctx.usarVazlo) {
+      vazloStats = { completo: 0, parcial: 0, sinStock: 0, costoSurtible: 0, udsSurtibles: 0,
+                     excluidos: ctx.excluidosVazlo || 0, recortados: ctx.recortadosVazlo || 0 };
       for (const it of pedido) {
         const ev = it.existenciaVazlo || 0;
         if (it.surtido === 'completo') vazloStats.completo++;
@@ -197,32 +214,150 @@ window.CALC = (function() {
         vazloStats.udsSurtibles += udsSurt;
         vazloStats.costoSurtible += udsSurt * it.costoUnit;
       }
-      // Techo Vazlo: en modo limitado, si sobró presupuesto significa que YA se
-      // financió toda la demanda que el proveedor puede surtir. El restante no
-      // puede gastarse en Vazlo aunque se amplíe el presupuesto.
-      vazloStats.techoAlcanzado = limitarVazlo && presupuestoRestante > 0;
+      vazloStats.techoAlcanzado = ctx.limitarVazlo && presupuestoRestante > 0;
     }
 
-    // Estadísticas del pedido
     const byABC = { A: { arts: 0, costo: 0 }, B: { arts: 0, costo: 0 }, C: { arts: 0, costo: 0 }, D: { arts: 0, costo: 0 } };
     for (const item of pedido) {
       const cat = item.abc || 'D';
       if (byABC[cat]) { byABC[cat].arts++; byABC[cat].costo += item.costoFinal; }
     }
 
-    return {
+    return Object.assign({
       pedido,
-      totalArts,
+      totalArts: pedido.length,
       totalUnidades,
       totalCosto,
       presupuestoUsado: totalCosto,
       presupuestoRestante,
       pctUsado: presupuesto > 0 ? (totalCosto / presupuesto * 100) : 0,
       byABC,
-      usarVazlo,
-      limitarVazlo,
+      usarVazlo: ctx.usarVazlo,
+      limitarVazlo: ctx.limitarVazlo,
       vazloStats
-    };
+    }, extra || {});
+  }
+
+  /* ─── OPTIMIZAR PEDIDO CON PRESUPUESTO ──────────────────
+     Dos modos:
+
+     A) Cascada PLANA (blindaje=false, comportamiento clásico):
+        1. Calcular pedido ideal por artículo
+        2. Ordenar por score de prioridad (desc)
+        3. Asignar presupuesto en cascada
+
+     B) Cascada BLINDADA por tramos (blindaje=true):
+        El presupuesto se reparte en tramos con prioridad, con un tope
+        (%) por tramo. Lo que no se usa en un tramo baja (rollover) al
+        siguiente, así lo crítico se financia PRIMERO:
+
+        · Tramo 0 — Cero-stock rápido-movedores: existencia==0, con
+          demanda y rotación ≥ mediana de su clase. Alcance ABC
+          configurable (blindajeAlcance). Es el más protegido.
+        · Tramo 1 — Top ancla "nunca deben faltar": los artículos de
+          mayor venta a clientes ancla (top N por venta_ancla) que
+          estén en cero o por debajo de su punto de reorden.
+        · Tramo 2 — Cascada general por score: todo lo demás, con el
+          presupuesto que reste.
+
+     Modo Vazlo (usarVazlo): cada artículo del pedido lleva
+     existenciaVazlo y clasificación de surtido (completo/parcial/
+     sin_stock). Con limitarVazlo=true la cantidad se topa al stock
+     del proveedor y los sin-stock quedan fuera de la cascada.
+  ─────────────────────────────────────────────────────── */
+  function optimizarPedido(articulos, params) {
+    const { presupuesto, filtroABC, soloConDemanda } = params;
+    const leadTimeDias = params.leadTimeDias != null ? params.leadTimeDias : params.leadTime;
+    const usarVazlo = !!params.usarVazlo;
+    const limitarVazlo = usarVazlo && !!params.limitarVazlo;
+    const blindaje = !!params.blindaje;
+    const paramsNorm = { ...params, leadTimeDias };
+    const vazCtx = { usarVazlo, limitarVazlo };
+
+    // Universo con demanda (base para todos los modos)
+    let base = articulos;
+    if (soloConDemanda) base = base.filter(a => a.dpd > 0 && a.costo_iva > 0);
+    const abcFiltro = (filtroABC && filtroABC.length > 0) ? filtroABC : ['A', 'B', 'C', 'D'];
+
+    /* ══════════ MODO PLANO (clásico) ══════════ */
+    if (!blindaje) {
+      const arts = base.filter(a => abcFiltro.includes(a.abc));
+      const calculados = arts.map(a => calcularArticulo(a, paramsNorm)).filter(r => r.cantPedir > 0);
+      calculados.sort((a, b) => b.score - a.score);
+      const r = financiarLista(calculados, presupuesto, { ...vazCtx, tramo: 'general' });
+      return armarResultado(r.pedido, presupuesto, r.restante,
+        { ...vazCtx, excluidosVazlo: r.excluidosVazlo, recortadosVazlo: r.recortadosVazlo },
+        { blindaje: false });
+    }
+
+    /* ══════════ MODO BLINDAJE (por tramos) ══════════ */
+    const alcance = (params.blindajeAlcance && params.blindajeAlcance.length > 0)
+      ? params.blindajeAlcance : ['A'];
+    const topeT0 = params.topeT0 != null ? params.topeT0 : 0.50; // cero-stock rápido
+    const topeT1 = params.topeT1 != null ? params.topeT1 : 0.25; // top ancla
+    const topAnclaN = params.topAnclaN != null ? params.topAnclaN : 200;
+
+    const medRot = medianaRotacionPorClase(articulos);
+    const usados = new Set();
+
+    // ── Tramo 0: cero-stock rápido-movedores ──
+    const t0src = base.filter(a =>
+      (a.existencia || 0) === 0 &&
+      alcance.includes(a.abc) &&
+      (a.rotacion || 0) >= (medRot[a.abc] || 0)
+    );
+    const t0items = t0src.map(a => calcularArticulo(a, paramsNorm))
+      .filter(r => r.cantPedir > 0)
+      .sort((a, b) => b.score - a.score);
+    t0items.forEach(i => usados.add(i.clave));
+    const r0 = financiarLista(t0items, presupuesto * topeT0, { ...vazCtx, tramo: 'cero_rapido' });
+
+    // ── Tramo 1: top ancla que necesita reposición ──
+    // Top N por venta_ancla (absoluto), que estén en cero o bajo reorden y no financiados en T0.
+    const anclaRank = articulos
+      .filter(a => (a.venta_ancla || 0) > 0)
+      .sort((a, b) => b.venta_ancla - a.venta_ancla)
+      .slice(0, topAnclaN);
+    const anclaClaves = new Set(anclaRank.map(a => a.clave));
+    const t1src = base.filter(a => anclaClaves.has(a.clave) && !usados.has(a.clave));
+    const t1items = t1src.map(a => {
+        const r = calcularArticulo(a, paramsNorm);
+        r.ventaAncla = a.venta_ancla || 0;
+        return r;
+      })
+      // "en cero o bajo reorden": la existencia no cubre el punto de reorden
+      .filter(r => r.cantPedir > 0 && r.existencia <= r.rop)
+      .sort((a, b) => b.ventaAncla - a.ventaAncla);
+    t1items.forEach(i => usados.add(i.clave));
+    const bolsaT1 = presupuesto * topeT1 + r0.restante;
+    const r1 = financiarLista(t1items, bolsaT1, { ...vazCtx, tramo: 'ancla' });
+
+    // ── Tramo 2: cascada general con lo que reste ──
+    const t2src = base.filter(a => abcFiltro.includes(a.abc) && !usados.has(a.clave));
+    const t2items = t2src.map(a => calcularArticulo(a, paramsNorm))
+      .filter(r => r.cantPedir > 0)
+      .sort((a, b) => b.score - a.score);
+    const bolsaT2 = presupuesto * (1 - topeT0 - topeT1) + r1.restante;
+    const r2 = financiarLista(t2items, Math.max(0, bolsaT2), { ...vazCtx, tramo: 'general' });
+
+    const pedido = [...r0.pedido, ...r1.pedido, ...r2.pedido];
+    const presupuestoRestante = r2.restante;
+
+    const tramos = [
+      { id: 'cero_rapido', nombre: 'Cero-stock rápido', arts: r0.arts, costo: r0.costo,
+        candidatos: t0items.length, fueraArts: r0.fueraArts, fueraCosto: r0.fueraCosto },
+      { id: 'ancla', nombre: 'Top ancla', arts: r1.arts, costo: r1.costo,
+        candidatos: t1items.length, fueraArts: r1.fueraArts, fueraCosto: r1.fueraCosto },
+      { id: 'general', nombre: 'Cascada general', arts: r2.arts, costo: r2.costo,
+        candidatos: t2items.length, fueraArts: r2.fueraArts, fueraCosto: r2.fueraCosto }
+    ];
+
+    const excluidosVazlo = r0.excluidosVazlo + r1.excluidosVazlo + r2.excluidosVazlo;
+    const recortadosVazlo = r0.recortadosVazlo + r1.recortadosVazlo + r2.recortadosVazlo;
+
+    return armarResultado(pedido, presupuesto, presupuestoRestante,
+      { ...vazCtx, excluidosVazlo, recortadosVazlo },
+      { blindaje: true, blindajeAlcance: alcance, topeT0, topeT1, tramos });
   }
 
   /* ─── ARTÍCULOS EN RIESGO DE QUIEBRE ─────────────────── */

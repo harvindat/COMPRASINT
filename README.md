@@ -34,6 +34,9 @@ El sistema ya no asume un período fijo de 5 meses. Detecta automáticamente el 
 | Filtro ABC | A / B / C / D | Incluir/excluir categorías del pedido |
 | Existencia Vazlo | On / Off | Lee el stock del almacén del proveedor para validar surtido |
 | Limitar a stock Vazlo | On / Off | Modo agresivo: topa el pedido al stock del proveedor y reasigna presupuesto |
+| Blindaje de compra | On / Off | Reparte el presupuesto en tramos con prioridad (cero-stock rápido → top ancla → general) |
+| Alcance blindaje | A / A+B / A+B+C | Clases que entran al tramo de cero-stock rápido-movedores |
+| Tope Tramo cero-stock / ancla | 0 – 100% | Presupuesto reservado a cada tramo blindado (el General toma el resto) |
 
 ## Existencia Vazlo (stock del proveedor)
 
@@ -74,6 +77,37 @@ Qty = max(0, DPD × diasObjetivo × factorLT + SS - stockActual)
 ```
 Score = 40% × abcScore + 25% × rotacionNorm + 20% × pctAncla + 15% × coberturaBaja
 ```
+
+## Blindaje de compra (cascada por tramos)
+
+Interruptor **"Blindar artículos en cero por venta"** en Compra Inteligente. Cuando está activo, el
+presupuesto deja de asignarse en un único ranking plano por score y se reparte en **tramos con
+prioridad y presupuesto reservado**. Lo que no se usa en un tramo baja (rollover) al siguiente, así
+lo crítico se financia **primero**:
+
+| Tramo | Qué incluye | Orden interno |
+|-------|-------------|---------------|
+| ① Cero-stock rápido-movedores | `existencia==0` **y** con demanda **y** `rotación ≥ mediana de su clase` | por score |
+| ② Top ancla "nunca deben faltar" | Top N por **venta ancla absoluta** que estén en cero o bajo su punto de reorden | por venta ancla |
+| ③ Cascada general | Todo lo demás elegible, con el presupuesto restante | por score |
+
+Controles: **alcance** del blindaje cero-stock (Solo A / A+B / A+B+C) y **topes de presupuesto** por
+tramo (sliders %). El tramo General toma el resto (`100% − T0 − T1`). El panel de resultados muestra,
+por tramo, cuántos artículos se financiaron, cuánto se gastó y **cuántos quedaron fuera por
+presupuesto** (con su costo), sin ilusiones sobre lo que el monto alcanza.
+
+> El blindaje corrige un hueco del score: el score usa el **% de venta ancla** (share), no el **monto**.
+> Un artículo que le vende mucho al ancla pero también a todos quedaba subvaluado; el Tramo 1 lo
+> rescata por monto absoluto. El blindaje **no crea presupuesto**: si la demanda cero-stock supera la
+> bolsa reservada, el reporte lo dice explícitamente.
+
+El export a Excel agrega la columna *Tramo Blindaje* por artículo y el resumen de tramos en la hoja de parámetros.
+
+> **Base de medición por default:** el simulador arranca con el **blindaje encendido**, **presupuesto $700,000**
+> (≈ media quincena sobre una venta de ~$1.4M/mes) y **Tramo 0 = 70% · Tramo 1 = 15% · General = 15%**,
+> alcance *Solo A*. Con esa base se financian ~300 de 322 cero-stock rápido-movedores clase A, se cubre
+> el ancla crítica y queda presupuesto para reposición general. Todo es ajustable en vivo para hacer
+> pruebas de incremento de presupuesto.
 
 ---
 
