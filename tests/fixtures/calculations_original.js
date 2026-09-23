@@ -48,29 +48,6 @@ window.CALC = (function() {
     return Math.ceil(z * sigma * Math.sqrt(leadTimeDias) * factorSS);
   }
 
-  /* ─── STOCK DE SEGURIDAD · MOTOR PULIDO ─────────────────
-     σ de la demanda durante el lead time:
-       · Poisson √(DPD·LT) como mínimo (demanda por piezas sueltas)
-       · si el artículo trae ventas_mes (piezas por mes) con ≥8 pz
-         en total, se usa la variabilidad mensual real escalada al
-         lead time: σmes·√(LT/30), si es mayor que Poisson.
-     SIN redondeo hacia arriba: el redondeo se hace una sola vez
-     sobre el stock objetivo (Math.round). Así desaparece el piso
-     artificial de 2 piezas del motor clásico.                    */
-  function stockSeguridadPulido(dpd, leadTimeDias, factorSS, ventasMes) {
-    const z = 1.65;
-    let sLT = Math.sqrt(Math.max(0, dpd * leadTimeDias));
-    if (Array.isArray(ventasMes) && ventasMes.length >= 3) {
-      const tot = ventasMes.reduce((s, x) => s + (+x || 0), 0);
-      if (tot >= 8) {
-        const mu = tot / ventasMes.length;
-        const sd = Math.sqrt(ventasMes.reduce((s, x) => s + Math.pow((+x || 0) - mu, 2), 0) / ventasMes.length);
-        sLT = Math.max(sLT, sd * Math.sqrt(leadTimeDias / 30));
-      }
-    }
-    return z * sLT * factorSS;
-  }
-
   /* ─── PUNTO DE REORDEN ────────────────────────────────── */
   function puntoReorden(dpd, leadTimeDias, ss) {
     return Math.ceil(dpd * leadTimeDias + ss);
@@ -100,31 +77,17 @@ window.CALC = (function() {
       return { clave: art.clave, cantPedir: 0, costoTotal: 0, prioridad: 0, reason: 'sin_demanda' };
     }
 
-    const pulido = params.motor === 'pulido';
+    const ss = stockSeguridad(dpd, leadTimeDias, factorSS);
+    const rop = puntoReorden(dpd, leadTimeDias, ss);
     const diasCobertura = existencia > 0 ? Math.round(existencia / dpd) : 0;
+
     // Cantidad objetivo = cubrir N días + SS
     const diasObj = Math.ceil(diasCoberturaMeta * flt);
-    let ss, rop, stockObj;
-    if (pulido) {
-      ss = stockSeguridadPulido(dpd, leadTimeDias, factorSS, art.ventas_mes);
-      rop = Math.round(dpd * leadTimeDias + ss);
-      stockObj = Math.round(dpd * diasObj + ss);
-      // Artículos cuya demanda del horizonte es < media pieza: objetivo 0,
-      // salvo el piso opcional de 1 pz para clases A/B (se financia al final
-      // de la fila porque su venta en riesgo es casi nula).
-      if (dpd * diasObj < 0.5) {
-        const piso = (params.pisoAB !== false) && (art.abc === 'A' || art.abc === 'B') ? 1 : 0;
-        stockObj = Math.min(stockObj, piso);
-      }
-    } else {
-      ss = stockSeguridad(dpd, leadTimeDias, factorSS);
-      rop = puntoReorden(dpd, leadTimeDias, ss);
-      stockObj = Math.ceil(dpd * diasObj + ss);
-    }
+    const stockObj = Math.ceil(dpd * diasObj + ss);
     const cantPedir = Math.max(0, stockObj - existencia);
     const costoTotal = cantPedir * costoIva;
 
-    const out = {
+    return {
       clave: art.clave,
       descripcion: art.descripcion,
       linea: art.linea,
@@ -144,22 +107,6 @@ window.CALC = (function() {
       // Existencia en el almacén del proveedor (Vazlo). null = sin dato cargado.
       existenciaVazlo: (art.existencia_vazlo != null) ? art.existencia_vazlo : null
     };
-    if (pulido) {
-      // Venta en riesgo: venta esperada del horizonte que la existencia
-      // actual NO alcanza a surtir, valuada a precio promedio de venta.
-      const precio = (art.unidades_total || 0) > 0 ? (art.venta_total || 0) / art.unidades_total : 0;
-      out.precioVenta = precio;
-      out.riesgo = Math.max(0, dpd * diasCoberturaMeta - existencia) * precio;
-    }
-    return out;
-  }
-
-  /* Orden de prioridad según motor: clásico = score; pulido = venta en
-     riesgo (desc) y, en empate, score.                                  */
-  function ordenPrioridad(motor) {
-    return motor === 'pulido'
-      ? (a, b) => ((b.riesgo || 0) - (a.riesgo || 0)) || (b.score - a.score)
-      : (a, b) => b.score - a.score;
   }
 
   /* ─── OPTIMIZAR PEDIDO CON PRESUPUESTO ──────────────────
@@ -189,26 +136,6 @@ window.CALC = (function() {
     articulos.forEach(a => {
       const c = a.abc || 'D';
       if (byClass[c] && (a.rotacion || 0) > 0) byClass[c].push(a.rotacion);
-    });
-    const med = {};
-    Object.keys(byClass).forEach(c => {
-      const arr = byClass[c].sort((x, y) => x - y);
-      if (!arr.length) { med[c] = 0; return; }
-      const mid = Math.floor(arr.length / 2);
-      med[c] = arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
-    });
-    return med;
-  }
-
-  /* ─── MEDIANA DE DPD POR CLASE (motor pulido) ───────────
-     "Rápido-movedor" por demanda real (piezas/día) en vez de la
-     rotación de ROTINV, que se dispara en artículos casi siempre en
-     cero aunque vendan 1–2 piezas.                                   */
-  function medianaDpdPorClase(articulos) {
-    const byClass = { A: [], B: [], C: [], D: [] };
-    articulos.forEach(a => {
-      const c = a.abc || 'D';
-      if (byClass[c] && (a.dpd || 0) > 0) byClass[c].push(a.dpd);
     });
     const med = {};
     Object.keys(byClass).forEach(c => {
@@ -344,9 +271,7 @@ window.CALC = (function() {
     const usarVazlo = !!params.usarVazlo;
     const limitarVazlo = usarVazlo && !!params.limitarVazlo;
     const blindaje = !!params.blindaje;
-    const motor = params.motor === 'pulido' ? 'pulido' : 'clasico';
-    const cmp = ordenPrioridad(motor);
-    const paramsNorm = { ...params, leadTimeDias, motor };
+    const paramsNorm = { ...params, leadTimeDias };
     const vazCtx = { usarVazlo, limitarVazlo };
 
     // Universo con demanda (base para todos los modos)
@@ -358,11 +283,11 @@ window.CALC = (function() {
     if (!blindaje) {
       const arts = base.filter(a => abcFiltro.includes(a.abc));
       const calculados = arts.map(a => calcularArticulo(a, paramsNorm)).filter(r => r.cantPedir > 0);
-      calculados.sort(cmp);
+      calculados.sort((a, b) => b.score - a.score);
       const r = financiarLista(calculados, presupuesto, { ...vazCtx, tramo: 'general' });
       return armarResultado(r.pedido, presupuesto, r.restante,
         { ...vazCtx, excluidosVazlo: r.excluidosVazlo, recortadosVazlo: r.recortadosVazlo },
-        { blindaje: false, motor, necesidadTotal: calculados.reduce((s, i) => s + i.costoTotal, 0) });
+        { blindaje: false });
     }
 
     /* ══════════ MODO BLINDAJE (por tramos) ══════════ */
@@ -372,21 +297,18 @@ window.CALC = (function() {
     const topeT1 = params.topeT1 != null ? params.topeT1 : 0.25; // top ancla
     const topAnclaN = params.topAnclaN != null ? params.topAnclaN : 200;
 
-    // Rápido-movedor: clásico = rotación ROTINV ≥ mediana de su clase;
-    // pulido = DPD ≥ mediana de DPD de su clase.
-    const campoRapido = motor === 'pulido' ? (a => a.dpd || 0) : (a => a.rotacion || 0);
-    const medRot = motor === 'pulido' ? medianaDpdPorClase(articulos) : medianaRotacionPorClase(articulos);
+    const medRot = medianaRotacionPorClase(articulos);
     const usados = new Set();
 
     // ── Tramo 0: cero-stock rápido-movedores ──
     const t0src = base.filter(a =>
       (a.existencia || 0) === 0 &&
       alcance.includes(a.abc) &&
-      campoRapido(a) >= (medRot[a.abc] || 0)
+      (a.rotacion || 0) >= (medRot[a.abc] || 0)
     );
     const t0items = t0src.map(a => calcularArticulo(a, paramsNorm))
       .filter(r => r.cantPedir > 0)
-      .sort(cmp);
+      .sort((a, b) => b.score - a.score);
     t0items.forEach(i => usados.add(i.clave));
     const r0 = financiarLista(t0items, presupuesto * topeT0, { ...vazCtx, tramo: 'cero_rapido' });
 
@@ -414,7 +336,7 @@ window.CALC = (function() {
     const t2src = base.filter(a => abcFiltro.includes(a.abc) && !usados.has(a.clave));
     const t2items = t2src.map(a => calcularArticulo(a, paramsNorm))
       .filter(r => r.cantPedir > 0)
-      .sort(cmp);
+      .sort((a, b) => b.score - a.score);
     const bolsaT2 = presupuesto * (1 - topeT0 - topeT1) + r1.restante;
     const r2 = financiarLista(t2items, Math.max(0, bolsaT2), { ...vazCtx, tramo: 'general' });
 
@@ -435,8 +357,7 @@ window.CALC = (function() {
 
     return armarResultado(pedido, presupuesto, presupuestoRestante,
       { ...vazCtx, excluidosVazlo, recortadosVazlo },
-      { blindaje: true, blindajeAlcance: alcance, topeT0, topeT1, tramos, motor,
-        necesidadTotal: [...t0items, ...t1items, ...t2items].reduce((s, i) => s + i.costoTotal, 0) });
+      { blindaje: true, blindajeAlcance: alcance, topeT0, topeT1, tramos });
   }
 
   /* ─── ARTÍCULOS EN RIESGO DE QUIEBRE ─────────────────── */
@@ -459,5 +380,5 @@ window.CALC = (function() {
     return (totalInventario / ventaMensual) * 30;
   }
 
-  return { factorLeadTime, stockSeguridad, stockSeguridadPulido, medianaDpdPorClase, puntoReorden, calcularArticulo, optimizarPedido, articulosEnRiesgo, coberturaGlobal, diasPeriodo, numMeses, IVA };
+  return { factorLeadTime, stockSeguridad, puntoReorden, calcularArticulo, optimizarPedido, articulosEnRiesgo, coberturaGlobal, diasPeriodo, numMeses, IVA };
 })();

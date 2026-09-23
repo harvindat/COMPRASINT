@@ -23,7 +23,14 @@ window.PageCompra = (function() {
     blindajeAlcance: ['A'],        // clases que entran al blindaje de cero-stock (A / A,B / A,B,C)
     topeT0: 0.70,                  // % presupuesto reservado a cero-stock rápido-movedores
     topeT1: 0.15,                  // % presupuesto reservado a top ancla
-    topAnclaN: 200                 // top N por venta_ancla considerados "críticos"
+    topAnclaN: 200,                // top N por venta_ancla considerados "críticos"
+    // ── Motor de cálculo ──
+    // 'pulido' (default): SS sin redondeo hacia arriba (Poisson / variabilidad
+    //   real), rápido-movedor por DPD, prioridad por venta en riesgo $ y piso
+    //   opcional de 1 pz A/B al final de la fila.
+    // 'clasico': motor original, idéntico a versiones anteriores.
+    motor: 'pulido',
+    pisoAB: true
   };
 
   let params = { ...defaults };
@@ -187,6 +194,10 @@ window.PageCompra = (function() {
             </div>
           </div>
 
+          <div class="control-group" style="margin-top:12px;padding:12px;border:1px solid var(--c-border);border-radius:8px" id="motor-panel">
+            ${motorPanelHTML()}
+          </div>
+
           <div class="control-group" style="margin-top:12px;padding:12px;border:1px solid var(--c-border);border-radius:8px" id="blindaje-panel">
             ${blindajePanelHTML()}
           </div>
@@ -225,7 +236,8 @@ window.PageCompra = (function() {
               <option value="sin_stock">Sin existencia Vazlo</option>
             </select>
             <select id="sort-pedido" style="width:160px;font-size:12px">
-              <option value="score">Ordenar: Prioridad</option>
+              <option value="score">Ordenar: Score</option>
+              <option value="riesgo">Ordenar: Venta en riesgo</option>
               <option value="costoFinal">Ordenar: Costo total</option>
               <option value="cantFinal">Ordenar: Cantidad</option>
               <option value="abc">Ordenar: ABC</option>
@@ -242,6 +254,38 @@ window.PageCompra = (function() {
 
     document.getElementById('page-compra').innerHTML = html;
     attachEvents();
+  }
+
+  /* ─── Panel "Motor de cálculo" ─────────────────────────── */
+  function motorPanelHTML() {
+    const pul = params.motor === 'pulido';
+    return `
+      <div class="control-label" style="margin-bottom:6px">Motor de cálculo</div>
+      <div class="lt-buttons" id="motor-btns">
+        <button type="button" class="lt-btn motor-btn ${pul ? 'active' : ''}" data-motor="pulido">Pulido (recomendado)</button>
+        <button type="button" class="lt-btn motor-btn ${pul ? '' : 'active'}" data-motor="clasico">Clásico</button>
+      </div>
+      <div style="font-size:11px;color:var(--c-text3);margin-top:6px;line-height:1.5">
+        ${pul
+          ? 'Stock de seguridad sin piso artificial · rápido-movedor por demanda · prioridad por venta en riesgo. El presupuesto es un tope: si la necesidad es menor, sobra.'
+          : 'Motor original: score ABC/rotación/ancla/cobertura, SS redondeado hacia arriba (objetivo mínimo 2 pz).'}
+      </div>
+      <label style="font-size:12px;display:${pul ? 'flex' : 'none'};align-items:center;gap:6px;margin-top:8px;cursor:pointer" id="piso-wrap">
+        <input type="checkbox" id="opt-piso" ${params.pisoAB !== false ? 'checked' : ''}> Piso de 1 pz para A/B de baja venta (se financia al final)
+      </label>`;
+  }
+
+  function attachMotorEvents() {
+    document.querySelectorAll('.motor-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        params.motor = btn.dataset.motor === 'clasico' ? 'clasico' : 'pulido';
+        const panel = document.getElementById('motor-panel');
+        if (panel) { panel.innerHTML = motorPanelHTML(); attachMotorEvents(); }
+        if (currentResult) calcular();
+      });
+    });
+    const piso = document.getElementById('opt-piso');
+    if (piso) piso.addEventListener('change', () => { params.pisoAB = piso.checked; });
   }
 
   /* ─── Panel "Blindaje de compra" (cascada por tramos) ──
@@ -443,6 +487,7 @@ window.PageCompra = (function() {
   }
 
   function attachEvents() {
+    attachMotorEvents();
     attachVazloEvents();
     attachBlindajeEvents();
 
@@ -462,9 +507,13 @@ window.PageCompra = (function() {
     });
 
     // Lead time buttons
-    document.querySelectorAll('.lt-btn').forEach(btn => {
+    // Solo los botones de lead time (#lt-buttons). Los botones de alcance del
+    // blindaje y de motor reutilizan la clase .lt-btn por estilo; antes este
+    // selector global les colgaba el handler y un clic en "A+B" dejaba
+    // leadTime = NaN → pedido de $0.
+    document.querySelectorAll('#lt-buttons .lt-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.lt-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('#lt-buttons .lt-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         params.leadTime = parseInt(btn.dataset.lt);
         const factor = window.CALC.factorLeadTime(params.leadTime);
@@ -622,9 +671,9 @@ window.PageCompra = (function() {
 
     panel.innerHTML = `
       <div class="result-panel">
-        <div class="rp-label">Pedido óptimo calculado · Lead time ${params.leadTime} días · Factor ×${flt.toFixed(2)}${result.blindaje ? ' · Blindaje activo' : ''}${result.usarVazlo ? ' · Existencia Vazlo activa' : ''}</div>
+        <div class="rp-label">Pedido óptimo calculado · Motor ${result.motor === 'pulido' ? 'pulido' : 'clásico'} · Lead time ${params.leadTime} días · Factor ×${flt.toFixed(2)}${result.blindaje ? ' · Blindaje activo' : ''}${result.usarVazlo ? ' · Existencia Vazlo activa' : ''}</div>
         <div class="rp-value">${F.compact(result.totalCosto)}</div>
-        <div class="rp-sub">${pctUsado}% del presupuesto utilizado · ${F.compact(result.presupuestoRestante)} disponible</div>
+        <div class="rp-sub">${pctUsado}% del presupuesto utilizado · ${F.compact(result.presupuestoRestante)} disponible${result.necesidadTotal != null ? ` · Necesidad total calculada: ${F.compact(result.necesidadTotal)}` : ''}</div>
         <div class="rp-grid">
           <div><div class="rp-item-label">Artículos a pedir</div><div class="rp-item-val">${F.number(result.totalArts)}</div></div>
           <div><div class="rp-item-label">Unidades totales</div><div class="rp-item-val">${F.number(result.totalUnidades)}</div></div>
@@ -829,14 +878,15 @@ window.PageCompra = (function() {
       }
       return Object.assign(base, {
         'Días Cobertura Actual': Math.round(a.diasCobertura),
-        'Stock Seguridad': a.ss,
+        'Stock Seguridad': F.round2(a.ss),
         'Pto. Reorden': a.rop,
         'Cantidad a Pedir': a.cantFinal,
         'Costo Unit. s/IVA': F.round2(a.costoUnit / 1.16),
         'Costo Unit. c/IVA': F.round2(a.costoUnit),
         'Costo Total c/IVA': F.round2(a.costoFinal),
         'Score Prioridad': Math.round(a.score),
-        '% Clientes Ancla': F.round2(a.pctAncla * 100)
+        '% Clientes Ancla': F.round2(a.pctAncla * 100),
+        ...(a.riesgo != null ? { 'Venta en Riesgo $': F.round2(a.riesgo) } : {})
       });
     });
 
@@ -851,6 +901,9 @@ window.PageCompra = (function() {
     // Summary sheet
     const summary = [
       { 'Parámetro': 'Presupuesto', 'Valor': '$' + params.presupuesto.toLocaleString('es-MX') },
+      { 'Parámetro': 'Motor de cálculo', 'Valor': currentResult.motor === 'pulido' ? 'PULIDO' : 'CLÁSICO' },
+      ...(currentResult.motor === 'pulido' ? [{ 'Parámetro': 'Piso 1 pz A/B', 'Valor': params.pisoAB !== false ? 'SÍ' : 'NO' }] : []),
+      ...(currentResult.necesidadTotal != null ? [{ 'Parámetro': 'Necesidad total calculada c/IVA', 'Valor': F.round2(currentResult.necesidadTotal) }] : []),
       { 'Parámetro': 'Lead Time (días)', 'Valor': params.leadTime },
       { 'Parámetro': 'Factor Lead Time', 'Valor': window.CALC.factorLeadTime(params.leadTime) },
       { 'Parámetro': 'Días Cobertura Objetivo', 'Valor': params.diasCoberturaMeta },
