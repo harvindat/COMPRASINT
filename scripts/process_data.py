@@ -304,6 +304,18 @@ def process(files, output_dir, corte=None):
     master['pct_ancla'] = np.where(master['venta_total'] > 0,
                                    master['venta_ancla'] / master['venta_total'], 0)
 
+    # Cliente principal por artículo y número de clientes ancla que lo compran
+    vac = df_ventas.groupby(['clave', 'cliente_id', 'cliente_nombre'], as_index=False)['venta'].sum()
+    vac = vac.sort_values(['clave', 'venta'], ascending=[True, False])
+    top_cli = vac.drop_duplicates('clave')[['clave', 'cliente_nombre', 'venta']].rename(
+        columns={'cliente_nombre': 'cliente_top', 'venta': '_venta_top'})
+    n_anc = vac[vac['cliente_id'].isin(top4_ids)].groupby('clave')['cliente_id'].nunique().rename('n_anclas').reset_index()
+    master = master.merge(top_cli, on='clave', how='left').merge(n_anc, on='clave', how='left')
+    master['cliente_top'] = master['cliente_top'].fillna('').astype(str)
+    master['n_anclas'] = master['n_anclas'].fillna(0).astype(int)
+    master['cliente_top_pct'] = np.where(master['venta_total'] > 0,
+                                         master['_venta_top'].fillna(0) / master['venta_total'], 0).round(4)
+
     # ABC por venta
     master_activo = master[master['venta_total'] > 0].copy().sort_values('venta_total', ascending=False)
     total_venta = master_activo['venta_total'].sum()
@@ -393,7 +405,7 @@ def process(files, output_dir, corte=None):
     cols_out = ['clave', 'descripcion', 'linea', 'existencia', 'costo_neto', 'costo_iva',
                 'valor_total', 'salidas', 'rotacion', 'dpd', 'dmd', 'venta_total',
                 'unidades_total', 'num_clientes', 'venta_ancla', 'pct_ancla', 'abc',
-                'score_compra', 'cobertura_dias']
+                'score_compra', 'cobertura_dias', 'cliente_top', 'cliente_top_pct', 'n_anclas']
     mc = master[cols_out].copy()
     for c in ['existencia', 'salidas', 'rotacion', 'dpd', 'dmd', 'venta_total',
               'unidades_total', 'num_clientes', 'venta_ancla', 'pct_ancla',

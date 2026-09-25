@@ -852,11 +852,34 @@ window.PageCompra = (function() {
     render();
   }
 
-  function exportarPedido() {
+  /* Exportación ENRIQUECIDA (exportPedido.js + ExcelJS): variables del robot,
+     decisión, motor alterno, veredicto y justificación por artículo. Si la
+     librería no carga (sin internet / CDN caído) cae a la exportación básica. */
+  async function exportarPedido() {
     if (!currentResult || !currentResult.pedido.length) {
       alert('Primero calcula un pedido para exportar.');
       return;
     }
+    const btn = document.getElementById('btn-export-pedido');
+    const txt = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Generando Excel…'; }
+    try {
+      if (!window.EXPORT_PEDIDO) throw new Error('módulo de exportación no cargado');
+      await window.EXPORT_PEDIDO.exportar({
+        result: currentResult, params: { ...params }, data: window.CEDI_DATA,
+        CALC: window.CALC, vazloMeta: vazloMeta()
+      });
+    } catch (e) {
+      console.error('Exportación enriquecida falló:', e);
+      alert('No se pudo generar el Excel enriquecido (' + (e && e.message ? e.message : e) + '). Se descargará la versión básica.');
+      exportarPedidoBasico();
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = txt; }
+    }
+  }
+
+  function exportarPedidoBasico() {
+    if (!currentResult || !currentResult.pedido.length) return;
     const F = window.FMT;
     const vazloOn = !!currentResult.usarVazlo;
     const blindajeOn = !!currentResult.blindaje;

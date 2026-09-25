@@ -1,1 +1,1 @@
-{ "name": "comprasint-tests", "private": true, "scripts": { "test": "bash run_all.sh" }, "devDependencies": { "jsdom": "^24.0.0" } }
+{ "name": "comprasint-tests", "private": true, "scripts": { "test": "bash run_all.sh" }, "devDependencies": { "jsdom": "^24.0.0", "exceljs": "4.4.0" } }

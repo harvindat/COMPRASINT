@@ -233,16 +233,22 @@ window.CALC = (function() {
     let costo = 0, uds = 0, arts = 0;
     let excluidosVazlo = 0, recortadosVazlo = 0;
     let fueraArts = 0, fueraCosto = 0;
+    // Diagnóstico por renglón (solo informativo, lo usa la exportación a Excel):
+    // posición en la fila del tramo y qué pasó con cada candidato.
+    const evaluados = [];
+    let pos = 0;
 
     for (const item of items) {
+      pos++;
       if (item.costoUnit <= 0) continue;
       let topePedir = item.cantPedir;
+      let recortado = false;
 
       // Modo agresivo: topar a la existencia del proveedor
       if (ctx.limitarVazlo) {
         const ev = item.existenciaVazlo || 0;
-        if (ev <= 0) { excluidosVazlo++; continue; }
-        if (ev < topePedir) { topePedir = ev; recortadosVazlo++; }
+        if (ev <= 0) { excluidosVazlo++; evaluados.push({ clave: item.clave, pos, estado: 'excluido_vazlo', cantFinal: 0, topePedir: 0, bolsaAntes: restante }); continue; }
+        if (ev < topePedir) { topePedir = ev; recortadosVazlo++; recortado = true; }
       }
 
       const maxAffordable = restante > 0 ? Math.floor(restante / item.costoUnit) : 0;
@@ -256,14 +262,30 @@ window.CALC = (function() {
           surtido = ev >= cantFinal ? 'completo' : (ev > 0 ? 'parcial' : 'sin_stock');
         }
         pedido.push({ ...item, cantFinal, costoFinal, surtido, tramo: ctx.tramo });
+        evaluados.push({ clave: item.clave, pos, cantFinal, topePedir, bolsaAntes: restante,
+          estado: cantFinal < topePedir ? 'parcial_presupuesto' : (recortado ? 'recortado_vazlo' : 'financiado') });
         restante -= costoFinal; costo += costoFinal; uds += cantFinal; arts++;
       } else {
         // No alcanzó ni una unidad con la bolsa disponible → fuera por presupuesto
         fueraArts++; fueraCosto += topePedir * item.costoUnit;
+        evaluados.push({ clave: item.clave, pos, estado: 'fuera_presupuesto', cantFinal: 0, topePedir, bolsaAntes: restante });
       }
     }
 
-    return { pedido, restante, costo, uds, arts, excluidosVazlo, recortadosVazlo, fueraArts, fueraCosto };
+    return { pedido, restante, costo, uds, arts, excluidosVazlo, recortadosVazlo, fueraArts, fueraCosto, evaluados };
+  }
+
+  /* ─── DIAGNÓSTICO PARA EXPORTACIÓN ─────────────────────
+     Junta, por clave, el tramo, la posición en la fila, el tamaño de la
+     fila y el desenlace de cada candidato evaluado. No afecta el cálculo
+     del pedido: solo se adjunta al resultado como `diagnostico`.        */
+  function armarDiagnostico(listas, extra) {
+    const porClave = {};
+    listas.forEach(({ tramo, items, r }) => {
+      const de = items.length;
+      r.evaluados.forEach(e => { porClave[e.clave] = { ...e, tramo, de }; });
+    });
+    return Object.assign({ porClave }, extra || {});
   }
 
   /* ─── ARMAR RESULTADO ESTÁNDAR ─────────────────────────
@@ -362,7 +384,9 @@ window.CALC = (function() {
       const r = financiarLista(calculados, presupuesto, { ...vazCtx, tramo: 'general' });
       return armarResultado(r.pedido, presupuesto, r.restante,
         { ...vazCtx, excluidosVazlo: r.excluidosVazlo, recortadosVazlo: r.recortadosVazlo },
-        { blindaje: false, motor, necesidadTotal: calculados.reduce((s, i) => s + i.costoTotal, 0) });
+        { blindaje: false, motor, necesidadTotal: calculados.reduce((s, i) => s + i.costoTotal, 0),
+          diagnostico: armarDiagnostico([{ tramo: 'general', items: calculados, r }],
+            { abcFiltro, criterioOrden: motor === 'pulido' ? 'riesgo' : 'score' }) });
     }
 
     /* ══════════ MODO BLINDAJE (por tramos) ══════════ */
@@ -397,6 +421,7 @@ window.CALC = (function() {
       .sort((a, b) => b.venta_ancla - a.venta_ancla)
       .slice(0, topAnclaN);
     const anclaClaves = new Set(anclaRank.map(a => a.clave));
+    const rankAncla = {}; anclaRank.forEach((a, i) => { rankAncla[a.clave] = i + 1; });
     const t1src = base.filter(a => anclaClaves.has(a.clave) && !usados.has(a.clave));
     const t1items = t1src.map(a => {
         const r = calcularArticulo(a, paramsNorm);
@@ -436,7 +461,15 @@ window.CALC = (function() {
     return armarResultado(pedido, presupuesto, presupuestoRestante,
       { ...vazCtx, excluidosVazlo, recortadosVazlo },
       { blindaje: true, blindajeAlcance: alcance, topeT0, topeT1, tramos, motor,
-        necesidadTotal: [...t0items, ...t1items, ...t2items].reduce((s, i) => s + i.costoTotal, 0) });
+        necesidadTotal: [...t0items, ...t1items, ...t2items].reduce((s, i) => s + i.costoTotal, 0),
+        diagnostico: armarDiagnostico([
+          { tramo: 'cero_rapido', items: t0items, r: r0 },
+          { tramo: 'ancla', items: t1items, r: r1 },
+          { tramo: 'general', items: t2items, r: r2 }
+        ], { abcFiltro, alcance, rankAncla, topAnclaN, medianas: medRot,
+             campoRapido: motor === 'pulido' ? 'dpd' : 'rotacion',
+             criterioOrden: motor === 'pulido' ? 'riesgo' : 'score',
+             bolsas: { t0: presupuesto * topeT0, t1: bolsaT1, t2: Math.max(0, bolsaT2) } }) });
   }
 
   /* ─── ARTÍCULOS EN RIESGO DE QUIEBRE ─────────────────── */
@@ -459,5 +492,5 @@ window.CALC = (function() {
     return (totalInventario / ventaMensual) * 30;
   }
 
-  return { factorLeadTime, stockSeguridad, stockSeguridadPulido, medianaDpdPorClase, puntoReorden, calcularArticulo, optimizarPedido, articulosEnRiesgo, coberturaGlobal, diasPeriodo, numMeses, IVA };
+  return { factorLeadTime, stockSeguridad, stockSeguridadPulido, medianaDpdPorClase, medianaRotacionPorClase, puntoReorden, calcularArticulo, optimizarPedido, articulosEnRiesgo, coberturaGlobal, diasPeriodo, numMeses, IVA };
 })();

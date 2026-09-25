@@ -382,11 +382,14 @@ window.DataProcessor = (function() {
     // Ventas por artículo
     const ventaArt = {};
     const clientesSet = {};
+    const ventaArtCli = {};   // clave → { cliente_id → venta } (cliente principal por artículo)
     ventas.forEach(v => {
       if (!ventaArt[v.clave]) ventaArt[v.clave] = { venta: 0, uds: 0, clientes: new Set() };
       ventaArt[v.clave].venta += v.venta;
       ventaArt[v.clave].uds += v.unidades;
       ventaArt[v.clave].clientes.add(v.cliente_id);
+      if (!ventaArtCli[v.clave]) ventaArtCli[v.clave] = {};
+      ventaArtCli[v.clave][v.cliente_id] = (ventaArtCli[v.clave][v.cliente_id] || 0) + v.venta;
     });
 
     // Clientes totales
@@ -416,6 +419,15 @@ window.DataProcessor = (function() {
       const va = ventaArt[e.clave] || { venta: 0, uds: 0, clientes: new Set() };
       const ventaAncla = ventaAnclaArt[e.clave] || 0;
       const ventaTotal = va.venta;
+      // Cliente principal del artículo y cuántos clientes ancla lo compran
+      let cliTop = '', cliTopVenta = 0, nAnclas = 0;
+      const porCli = ventaArtCli[e.clave];
+      if (porCli) {
+        Object.keys(porCli).forEach(cid => {
+          if (porCli[cid] > cliTopVenta) { cliTopVenta = porCli[cid]; cliTop = (ventaCliente[cid] && ventaCliente[cid].nombre) || cid; }
+          if (top4_ids.includes(cid)) nAnclas++;
+        });
+      }
       return {
         clave: e.clave,
         descripcion: e.descripcion || art.nombre || '',
@@ -432,7 +444,10 @@ window.DataProcessor = (function() {
         unidades_total: va.uds,
         num_clientes: va.clientes.size,
         venta_ancla: ventaAncla,
-        pct_ancla: ventaTotal > 0 ? ventaAncla / ventaTotal : 0
+        pct_ancla: ventaTotal > 0 ? ventaAncla / ventaTotal : 0,
+        cliente_top: cliTop,
+        cliente_top_pct: ventaTotal > 0 ? Math.round(cliTopVenta / ventaTotal * 10000) / 10000 : 0,
+        n_anclas: nAnclas
       };
     });
 
