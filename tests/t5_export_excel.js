@@ -22,7 +22,7 @@ const casos=[['pulido_600k',{motor:'pulido'}],['clasico_600k',{motor:'clasico'}]
   const t0=Date.now();
   const {wb,an}=await W.EXPORT_PEDIDO.construirLibro(ExcelJS,{result,params,data,CALC:W.CALC,vazloMeta:{fecha_carga:'2026-09-21'}});
   const ms=Date.now()-t0;
-  ok(JSON.stringify(wb.worksheets.map(w=>w.name))===JSON.stringify(['Resumen','Pedido','Análisis completo','Fuera por presupuesto','Metodología']),`${nom} hojas en orden`);
+  ok(JSON.stringify(wb.worksheets.map(w=>w.name))===JSON.stringify(['Resumen','Pedido','Análisis completo','Fuera por presupuesto']),`${nom} hojas en orden`);
   const P=wb.getWorksheet('Pedido'); const hdr=P.getRow(3).values; const col=h=>hdr.indexOf(h);
   const rows=[]; P.eachRow((r,i)=>{ if(i>=4) rows.push(r); });
   ok(rows.length===result.totalArts,`${nom} Pedido tiene ${result.totalArts} renglones`,rows.length);

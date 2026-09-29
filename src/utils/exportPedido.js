@@ -13,7 +13,7 @@
      · COMPLEMENTARIO (cliente principal, anclas que lo compran)
      · VEREDICTO y JUSTIFICACIÓN en texto
    Hojas: Resumen · Pedido · Análisis completo · Fuera por
-   presupuesto · Metodología.
+   presupuesto.
 
    Usa ExcelJS (estilos, encabezados agrupados, filtros, paneles
    congelados). Se carga del CDN SOLO al exportar; si no se puede
@@ -385,36 +385,6 @@ window.EXPORT_PEDIDO = (function () {
     ws.getCell(nota, 3).font = FONT({ italic: true, color: { argb: C.gris } });
   }
 
-  function hojaMetodologia(wb, an) {
-    const ws = wb.addWorksheet('Metodología');
-    ws.getColumn(1).width = 28; ws.getColumn(2).width = 110;
-    const pul = an.motor === 'pulido';
-    const M = [
-      ['Columna', 'Qué significa / cómo se calcula'],
-      ['DPD (pz/día)', 'Demanda por día = unidades vendidas en el periodo ÷ días del periodo.'],
-      ['Demanda mes / Nd', 'DPD × 30.4 y DPD × días de cobertura objetivo.'],
-      ['SS', pul ? 'Stock de seguridad = 1.65 × √(DPD × lead time) × factor SS (sin redondear). Si el artículo trae ventas mensuales se usa la variabilidad real si es mayor.' : 'Stock de seguridad = redondear hacia arriba(1.65 × 0.30·DPD × √lead time × factor SS).'],
-      ['ROP', 'Punto de reorden = DPD × lead time + SS. En el tramo Top ancla solo entran artículos con existencia ≤ ROP.'],
-      ['Objetivo', pul ? `redondear(DPD × ${an.diasObj} días + SS). Si la demanda del horizonte es < ½ pz: 0, o 1 pz (piso) para clases A/B.` : `redondear hacia arriba(DPD × ${an.diasObj} días + SS).`],
-      ['Necesidad robot', 'Objetivo − existencia (mínimo 0), antes de presupuesto.'],
-      ['Rotación / Mediana / ¿Rápido?', an.campoRapido === 'dpd' ? 'Rápido-movedor = DPD ≥ mediana de DPD de su clase ABC. La rotación (ROTINV) se muestra como referencia.' : 'Rápido-movedor = rotación ROTINV ≥ mediana de rotación de su clase ABC.'],
-      ['Venta anclas / % ancla / Rank', 'Venta del artículo a los 4 clientes de mayor venta; % sobre la venta del artículo; lugar en el Top-200 por venta ancla.'],
-      ['Score', '40% ABC + 25% rotación normalizada + 20% % ancla + 15% (1 − cobertura/365).'],
-      ...(pul ? [['Venta en riesgo', `max(0, DPD × ${an.N} − existencia) × precio promedio de venta. Es el criterio de prioridad del motor pulido.`]] : []),
-      ['Tramo / Posición / Candidatos', 'T0 cero-stock rápido (blindado), T1 Top ancla bajo reorden, T2 cascada general. Posición = lugar en la fila de su tramo; candidatos = tamaño de la fila.'],
-      ['Acumulado al entrar', 'Dinero ya comprometido en el pedido cuando se financió este renglón.'],
-      ['Motor alterno', 'Lo que pediría el otro motor (pulido/clásico) con exactamente los mismos parámetros.'],
-      ['Cliente principal', 'Cliente con mayor venta del artículo en el periodo y su % de la venta del artículo.'],
-      ['Veredicto', 'CUBRE NECESIDAD = se compra todo lo que el robot calculó; CUBRE PARCIAL = limitado por presupuesto o stock Vazlo; NO CUBRE / NO REQUIERE para los no comprados.']
-    ];
-    M.forEach((m, i) => {
-      const a = ws.getCell(i + 1, 1), b = ws.getCell(i + 1, 2);
-      a.value = m[0]; b.value = m[1]; b.alignment = { wrapText: true, vertical: 'top' };
-      a.font = FONT({ bold: true, color: i === 0 ? { argb: C.blanco } : undefined }); b.font = FONT({ bold: i === 0, color: i === 0 ? { argb: C.blanco } : undefined });
-      if (i === 0) { a.fill = fill(C.navy); b.fill = fill(C.navy); }
-    });
-  }
-
   async function construirLibro(ExcelJS, ctx) {
     const an = analizar(ctx);
     const wb = new ExcelJS.Workbook();
@@ -427,7 +397,6 @@ window.EXPORT_PEDIDO = (function () {
     const ped = hojaDetalle(wb, 'Pedido', ordenPed, an, true, `Pedido del robot · ${ordenPed.length} artículos · ${money(ctx.result.totalCosto)} de ${money(ctx.params.presupuesto)}`);
     const anl = hojaDetalle(wb, 'Análisis completo', ordenAn, an, false, `Todos los artículos evaluados (${ordenAn.length}) · por qué se compran o no`);
     hojaFuera(wb, an);
-    hojaMetodologia(wb, an);
     hojaResumen(wsRes, ctx, an, { ped, an: anl });
     return { wb, an };
   }

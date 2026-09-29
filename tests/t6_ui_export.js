@@ -16,9 +16,9 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms)); const $=i=>w.document.getElemen
   ok(blobs.length===1 && blobs[0].size>100000,'descarga el libro enriquecido', blobs[0]&&blobs[0].size);
   ok(basica===0 && alerts.length===0,'no usa la exportación básica');
   await wait(50); ok(!$('btn-export-pedido').disabled && /Excel/.test($('btn-export-pedido').textContent),'botón se restablece');
-  // el libro descargado se puede abrir y trae las 5 hojas
+  // el libro descargado se puede abrir y trae las 4 hojas
   const buf=Buffer.from(await blobs[0].arrayBuffer()); const wb=new (require('exceljs').Workbook)(); await wb.xlsx.load(buf);
-  ok(wb.worksheets.map(x=>x.name).join('|')==='Resumen|Pedido|Análisis completo|Fuera por presupuesto|Metodología','libro con 5 hojas');
+  ok(wb.worksheets.map(x=>x.name).join('|')==='Resumen|Pedido|Análisis completo|Fuera por presupuesto','libro con 4 hojas');
   // fallback: si el módulo falla, alerta y descarga la básica
   w.EXPORT_PEDIDO.exportar=async()=>{throw new Error('CDN caído');};
   $('btn-export-pedido').click(); await wait(200);
