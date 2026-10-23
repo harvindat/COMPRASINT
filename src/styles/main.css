@@ -495,3 +495,7 @@ input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(225,2
   .logo-title, .logo-sub { display: none; }
   .user-box .user-meta, .user-box .btn-auth span.txt { display: none; }
 }
+
+/* ---- Validador de archivos (Actualizar Datos) ---- */
+.btn:disabled, .btn[disabled] { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.4); }
+#panel-validacion table.data-table td:last-child { white-space: normal; min-width: 320px; word-break: break-word; }

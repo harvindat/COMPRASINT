@@ -9,5 +9,7 @@ node t4_ui_jsdom.js
 node t5_export_excel.js
 node t6_ui_export.js
 node t7_pipeline_clientes.js
+node t8_presupuesto_2m.js
+node t9_validador.js
 rm -rf _out
 echo "TODAS LAS PRUEBAS PASARON"

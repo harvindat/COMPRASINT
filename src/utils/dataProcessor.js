@@ -615,27 +615,82 @@ window.DataProcessor = (function() {
     return { meta, kpis, abc, lineas, compras_mes, clientes, top50_articulos: top50, riesgo, articulos: master, top4_ids };
   }
 
-  /* ─── API pública: procesar archivos File ─────────────── */
-  async function processFiles(fileMap, corte) {
-    // fileMap: { ARTICULOS: File, EXIVAL: File, ROTINV: File, COMPRAS: File, VECLIEARTS: File }
-    async function readWb(file) {
+  /* ─── Lectura + validación de un archivo ─────────────────
+     Devuelve { rows, reporte }. Nunca lanza: un archivo que no se puede
+     leer regresa un reporte con el error de lectura y rows = null.      */
+  async function leerYValidar(key, file) {
+    const V = window.Validador;
+    let rows = null;
+    try {
       const buf = await file.arrayBuffer();
-      return XLSX.read(buf, { type: 'array', cellDates: false });
+      const wb = XLSX.read(buf, { type: 'array', cellDates: false });
+      if (!wb || !wb.SheetNames || !wb.SheetNames.length) throw new Error('el libro no tiene hojas');
+      rows = readSheet(wb);
+    } catch (e) {
+      return { rows: null, reporte: V ? V.errorLectura(key, file && file.name, e) : null, errorLectura: e };
     }
+    let extra;
+    if (key === 'VAZLO') { const v = loadVazlo(rows); v.nombre = file.name; extra = { vazlo: v }; }
+    const reporte = V ? V.validarArchivo(key, rows, file && file.name, extra) : null;
+    return { rows, reporte, extra };
+  }
+
+  /* Validación rápida de un solo archivo (casillas de Actualizar Datos) */
+  async function validarArchivoFile(key, file) {
+    return (await leerYValidar(key, file)).reporte;
+  }
+
+  function errorValidacion(validacion, msg) {
+    const err = new Error(msg || 'La validación encontró errores en los archivos. Corrígelos y vuelve a procesar.');
+    err.validacion = validacion;
+    return err;
+  }
+
+  /* ─── API pública: procesar archivos File ───────────────
+     1. Lee y VALIDA cada archivo (lectura, tipo, columnas, cuadre con
+        la fila Total, fechas). Si alguno tiene errores → no se integra.
+     2. Parsea con los loaders y valida los CRUCES entre archivos
+        (período, cobertura del catálogo, venta que se perdería).
+     3. Si no hay fecha de corte manual y los reportes coinciden en su
+        fecha de cierre, usa esa fecha como corte.
+     Los errores se lanzan con err.validacion (para pintarlos en la UI). */
+  async function processFiles(fileMap, corte) {
+    // fileMap: { ARTICULOS: File, EXIVAL: File, ROTINV: File, COMPRAS: File, VECLIEARTS: File, VAZLO?: File }
+    const V = window.Validador;
+    const claves = ['ARTICULOS', 'EXIVAL', 'ROTINV', 'COMPRAS', 'VECLIEARTS'].concat(fileMap.VAZLO ? ['VAZLO'] : []);
+    const validacion = { archivos: {}, cruces: null, corteAplicado: null, corteOrigen: null };
+    const leidos = {};
+    for (const key of claves) {
+      if (!fileMap[key]) {
+        if (V) { const r = V.validarArchivo(key, [], ''); r.errores = ['Falta el archivo.']; r.ok = false; validacion.archivos[key] = r; }
+        else throw new Error('Falta el archivo ' + key);
+        continue;
+      }
+      const res = await leerYValidar(key, fileMap[key]);
+      if (!res.rows && !V) throw new Error(`No se pudo leer ${key}: ${res.errorLectura && res.errorLectura.message}`);
+      leidos[key] = res;
+      if (res.reporte) validacion.archivos[key] = res.reporte;
+    }
+    if (V && Object.values(validacion.archivos).some(r => !r.ok)) throw errorValidacion(validacion);
 
     const parsed = {
-      articulos: loadArticulos(readSheet(await readWb(fileMap.ARTICULOS))),
-      exival:    loadExival(readSheet(await readWb(fileMap.EXIVAL))),
-      rotinv:    loadRotinv(readSheet(await readWb(fileMap.ROTINV))),
-      ventas:    loadVentas(readSheet(await readWb(fileMap.VECLIEARTS))),
-      compras:   loadCompras(readSheet(await readWb(fileMap.COMPRAS)))
+      articulos: loadArticulos(leidos.ARTICULOS.rows),
+      exival:    loadExival(leidos.EXIVAL.rows),
+      rotinv:    loadRotinv(leidos.ROTINV.rows),
+      ventas:    loadVentas(leidos.VECLIEARTS.rows),
+      compras:   loadCompras(leidos.COMPRAS.rows)
     };
-
     // Archivo OPCIONAL: existencia del almacén del proveedor (Vazlo)
-    if (fileMap.VAZLO) {
-      const v = loadVazlo(readSheet(await readWb(fileMap.VAZLO)));
-      v.nombre = fileMap.VAZLO.name;
-      parsed.vazlo = v;
+    if (leidos.VAZLO) parsed.vazlo = leidos.VAZLO.extra.vazlo;
+
+    if (V) {
+      validacion.cruces = V.validarCruces(parsed, validacion.archivos);
+      if (!validacion.cruces.ok) throw errorValidacion(validacion);
+      if (corte) { validacion.corteAplicado = corte; validacion.corteOrigen = 'manual'; }
+      else if (validacion.cruces.stats.corteSugerido) {
+        corte = validacion.cruces.stats.corteSugerido;
+        validacion.corteAplicado = corte; validacion.corteOrigen = 'reportes';
+      }
     }
 
     const counts = {
@@ -645,7 +700,8 @@ window.DataProcessor = (function() {
     };
 
     const dataset = buildDataset(parsed, corte);
-    return { dataset, counts };
+    if (V) dataset.meta.validacion = V.resumen(validacion);
+    return { dataset, counts, validacion };
   }
 
   /* ─── Generar archivo cedi_data.js descargable ────────── */
@@ -659,5 +715,5 @@ window.DataProcessor = (function() {
     return blob;
   }
 
-  return { processFiles, buildDataset, generarArchivoJS, generarContenidoJS, calcularPeriodo, parseVazloFile, aplicarVazloEnSesion, mergeVazlo, datasetConVazlo };
+  return { processFiles, validarArchivoFile, buildDataset, generarArchivoJS, generarContenidoJS, calcularPeriodo, parseVazloFile, aplicarVazloEnSesion, mergeVazlo, datasetConVazlo };
 })();

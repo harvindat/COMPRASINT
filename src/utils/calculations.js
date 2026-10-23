@@ -361,7 +361,11 @@ window.CALC = (function() {
      del proveedor y los sin-stock quedan fuera de la cascada.
   ─────────────────────────────────────────────────────── */
   function optimizarPedido(articulos, params) {
-    const { presupuesto, filtroABC, soloConDemanda } = params;
+    const { filtroABC, soloConDemanda } = params;
+    // Presupuesto defensivo: NaN / texto / negativo → 0 (pedido vacío explícito,
+    // en vez de propagar NaN por toda la cascada). Valores válidos pasan intactos.
+    const presNum = Number(params.presupuesto);
+    const presupuesto = Number.isFinite(presNum) && presNum > 0 ? presNum : 0;
     const leadTimeDias = params.leadTimeDias != null ? params.leadTimeDias : params.leadTime;
     const usarVazlo = !!params.usarVazlo;
     const limitarVazlo = usarVazlo && !!params.limitarVazlo;
@@ -393,7 +397,11 @@ window.CALC = (function() {
     const alcance = (params.blindajeAlcance && params.blindajeAlcance.length > 0)
       ? params.blindajeAlcance : ['A'];
     const topeT0 = params.topeT0 != null ? params.topeT0 : 0.50; // cero-stock rápido
-    const topeT1 = params.topeT1 != null ? params.topeT1 : 0.25; // top ancla
+    let topeT1 = params.topeT1 != null ? params.topeT1 : 0.25; // top ancla
+    // T0 + T1 nunca pueden pasar de 100% (la UI ya lo impide; esto protege
+    // llamadas directas): si no, la bolsa General saldría negativa y se
+    // "comería" el rollover de T1.
+    if (topeT0 + topeT1 > 1) topeT1 = Math.max(0, 1 - topeT0);
     const topAnclaN = params.topAnclaN != null ? params.topAnclaN : 200;
 
     // Rápido-movedor: clásico = rotación ROTINV ≥ mediana de su clase;

@@ -27,7 +27,7 @@ El sistema ya no asume un período fijo de 5 meses. Detecta automáticamente el 
 
 | Variable | Rango | Descripción |
 |----------|-------|-------------|
-| Presupuesto semanal | $50K – $1M | Restricción de gasto para el pedido |
+| Presupuesto semanal | $50K – $2M | Restricción de gasto para el pedido (slider en pasos de $10K + caja de monto exacto al peso). Los límites viven en `LIM_PRES` de `compra.js` |
 | Lead time proveedor | 3 / 5 / 9 / 15 días | Ajusta el factor multiplicador del pedido |
 | Días de cobertura objetivo | 7 – 60 días | Meta de días de stock post-pedido |
 | Factor stock de seguridad | 0.5× – 2.0× | Multiplica el SS calculado por el modelo |
@@ -103,11 +103,36 @@ presupuesto** (con su costo), sin ilusiones sobre lo que el monto alcanza.
 
 El export a Excel agrega la columna *Tramo Blindaje* por artículo y el resumen de tramos en la hoja de parámetros.
 
+> **Presupuesto hasta $2M:** el presupuesto es un **tope, no una meta**. Si la necesidad calculada es menor que el
+> presupuesto, el robot financia todo y el sobrante se muestra con un aviso (no se inventa compra para llenarlo). Con la
+> configuración base (pulido, A+B, 30 días) la necesidad ronda **$1.0M**: para usar más presupuesto hay que ampliar la
+> necesidad (más días de cobertura, factor SS, clase C). Las bolsas de los tramos escalan con el monto
+> (a $2M: T0 = $1.4M · T1 = $300K · General = $300K + rollover). Batería: `tests/t8_presupuesto_2m.js`.
+
 > **Base de medición por default:** el simulador arranca con el **blindaje encendido**, **presupuesto $700,000**
 > (≈ media quincena sobre una venta de ~$1.4M/mes) y **Tramo 0 = 70% · Tramo 1 = 15% · General = 15%**,
 > alcance *Solo A*. Con esa base se financian ~300 de 322 cero-stock rápido-movedores clase A, se cubre
 > el ancla crítica y queda presupuesto para reposición general. Todo es ajustable en vivo para hacer
 > pruebas de incremento de presupuesto.
+
+## Validación de archivos (Actualizar Datos)
+
+Cada archivo se valida **al seleccionarlo** (`src/utils/validador.js`) y otra vez al procesar. Un **error** bloquea la
+integración (no se genera ni se puede guardar el dataset); un **aviso** se muestra pero deja continuar.
+
+| Archivo | Qué se valida |
+|---------|---------------|
+| Todos | Que se pueda leer (dañado, con contraseña, no es Excel, hoja vacía), que sea el reporte correcto para su casilla (detecta archivos intercambiados), fecha del reporte en el encabezado |
+| ARTÍCULOS | Encabezados `Clave · Nombre · Línea`, claves repetidas o inválidas |
+| EXIVAL | Columnas Existencia / Último costo / Valor total, valuación por último costo, datos desde la fila 7, claves duplicadas, existencia no numérica, cuadre con `Total N artículos` (renglones, piezas y valor), **artículos en existencia 0 presentes** (cuadre con `N artículos sin existencia`), artículos con stock sin costo |
+| ROTINV | Columnas Salidas / Rotación, cuadre con `Total N artículos` (renglones y salidas), rotación no numérica (la rotación "Total" del ERP es aviso) |
+| COMPRAS | Columnas en su posición fija (Fecha A, Folio B, Descripción D, Unidades M, Costo unitario Q, Costo total S), concepto Recepción de mercancía, fechas de folio reconocibles, cuadre con `Total N documentos` (folios y costo), compras posteriores al cierre |
+| VECLIEARTS | Venta en M–O y Unidades en Q, clientes reconocidos, importes numéricos, cuadre contra la suma de `Total <cliente>`, renglones sin unidades |
+| Vazlo | Claves con existencia detectadas, cruce contra el catálogo |
+| Cruces | Mismo cierre y mismo inicio en los 4 reportes con fecha (>7 días = error), EXIVAL cubre el catálogo (>2% faltante = error), venta de claves que no vienen en EXIVAL (>1% = error) |
+
+Si la fecha de corte se deja vacía y los reportes cierran el mismo día, se usa esa fecha como corte. El resumen de
+la validación queda en `meta.validacion` del `cedi_data.js`. Pruebas: `tests/t9_validador.js`.
 
 ---
 

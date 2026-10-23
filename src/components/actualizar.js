@@ -18,11 +18,16 @@ window.PageActualizar = (function() {
   let files = {};          // { KEY: File }
   let resultado = null;    // dataset procesado
   let modoSoloVazlo = false; // true cuando solo se actualiza la existencia del proveedor
+  let validaciones = {};     // { KEY: reporte del validador | 'pendiente' }
+  let secuencia = 0;         // descarta validaciones viejas si se reemplaza el archivo
+
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   function render() {
     files = {};
     resultado = null;
     modoSoloVazlo = false;
+    validaciones = {};
     const html = `
       <div class="page-header">
         <div class="page-title">Actualizar Datos</div>
@@ -35,15 +40,16 @@ window.PageActualizar = (function() {
           <p>1. Exporta los 5 reportes del sistema en el mismo formato que los archivos originales. Opcionalmente agrega el archivo de <strong>existencia del proveedor (Vazlo)</strong> para habilitar la validación de surtido en Compra Inteligente.</p>
           <p class="mt-4" style="color:var(--c-text);"><strong>Actualización rápida:</strong> si SOLO quieres actualizar la existencia del proveedor, carga únicamente <code>EXISTENCIAVAZLO.xlsx</code> — no necesitas los otros 5 archivos. Se cruza contra el catálogo vigente y podrás guardarlo en GitHub igual que siempre.</p>
           <p class="mt-4">2. Arrastra o selecciona cada archivo en su casilla. El sistema detecta automáticamente el período (semanas o meses) a partir de las fechas en COMPRAS. Si ya habías cargado existencia Vazlo antes y no subes una nueva, el dato anterior se conserva.</p>
-          <p class="mt-4">3. Presiona <strong>Procesar</strong> para validar y previsualizar los nuevos KPIs.</p>
-          <p class="mt-4">4. Aplica los cambios para actualizar el dashboard en la sesión actual, o descarga el nuevo <code>cedi_data.js</code> para reemplazar el archivo en el proyecto de forma permanente.</p>
+          <p class="mt-4">3. Cada archivo se <strong>valida al seleccionarlo</strong>: que se pueda leer, que sea el reporte correcto, que tenga las columnas en su lugar y que cuadre con su fila de totales. Si alguno trae un error, <strong>no se puede procesar</strong> hasta corregirlo.</p>
+          <p class="mt-4">4. Presiona <strong>Procesar</strong>: se validan también los cruces entre archivos (mismo período, EXIVAL completo contra el catálogo, venta que se perdería) y se previsualizan los nuevos KPIs.</p>
+          <p class="mt-4">5. Aplica los cambios para actualizar el dashboard en la sesión actual, o descarga el nuevo <code>cedi_data.js</code> para reemplazar el archivo en el proyecto de forma permanente.</p>
         </div>
       </div>
 
       <div class="control-group mb-16" style="max-width:280px">
         <div class="control-label">Fecha de corte (opcional)</div>
         <input type="date" id="fecha-corte" value="" style="width:100%" />
-        <div style="font-size:11px;color:var(--c-text3);margin-top:4px">Si se deja vacío, usa la última fecha de compra</div>
+        <div style="font-size:11px;color:var(--c-text3);margin-top:4px">Si se deja vacío, usa la fecha de cierre de los reportes (o la última compra)</div>
       </div>
 
       <div class="export-grid mb-16" id="slots-grid">
@@ -114,14 +120,84 @@ window.PageActualizar = (function() {
 
   function setFile(key, file) {
     files[key] = file;
-    const status = document.getElementById('slot-status-' + key);
-    if (status) {
-      status.innerHTML = `<span style="color:var(--c-green)">✓ ${file.name}</span> · ${(file.size/1024).toFixed(0)} KB`;
-    }
-    const card = document.getElementById('slot-' + key);
-    if (card) card.style.borderColor = 'var(--c-green)';
-
+    resultado = null;
+    const preview = document.getElementById('preview-resultado');
+    if (preview) preview.innerHTML = '';
+    validaciones[key] = 'pendiente';
+    pintarSlot(key);
     actualizarBotonProcesar();
+    const miSec = ++secuencia;
+    const validar = window.DataProcessor && window.DataProcessor.validarArchivoFile;
+    if (!validar || !window.Validador) { validaciones[key] = null; pintarSlot(key); actualizarBotonProcesar(); return Promise.resolve(); }
+    return validar(key, file).then(rep => {
+      if (files[key] !== file) return;            // se reemplazó mientras validaba
+      validaciones[key] = rep;
+    }).catch(e => {
+      if (files[key] !== file) return;
+      validaciones[key] = window.Validador.errorLectura(key, file.name, e);
+    }).then(() => { if (files[key] === file) { pintarSlot(key); actualizarBotonProcesar(); } });
+  }
+
+  /* Estado de la casilla según el validador */
+  function pintarSlot(key) {
+    const file = files[key];
+    const status = document.getElementById('slot-status-' + key);
+    const card = document.getElementById('slot-' + key);
+    if (!status || !file) return;
+    const v = validaciones[key];
+    const kb = `${(file.size / 1024).toFixed(0)} KB`;
+    let color, html;
+    if (v === 'pendiente') {
+      color = 'var(--c-border)';
+      html = `<span style="color:var(--c-text2)">⏳ Validando ${esc(file.name)}…</span>`;
+    } else if (!v) {
+      color = 'var(--c-green)';
+      html = `<span style="color:var(--c-green)">✓ ${esc(file.name)}</span> · ${kb}`;
+    } else if (!v.ok) {
+      color = 'var(--c-red)';
+      html = `<span style="color:var(--c-red);font-weight:600">✗ ${esc(file.name)} · no se puede usar</span>
+        <div class="val-msgs" style="color:var(--c-red);font-size:11px;margin-top:4px;text-align:left;line-height:1.45">${v.errores.map(e => '• ' + esc(e)).join('<br>')}</div>`;
+    } else {
+      const per = v.stats.fechaFin ? ` · ${v.stats.fechaIni && v.stats.fechaIni !== v.stats.fechaFin ? esc(v.stats.fechaIni) + ' → ' : 'al '}${esc(v.stats.fechaFin)}` : '';
+      const filas = v.stats.filas != null ? ` · ${window.FMT ? window.FMT.number(v.stats.filas) : v.stats.filas} renglones` : '';
+      color = v.avisos.length ? '#d9a441' : 'var(--c-green)';
+      html = `<span style="color:var(--c-green)">✓ ${esc(file.name)}</span> · ${kb}${filas}${per}` +
+        (v.avisos.length ? `<div class="val-msgs" style="color:#d9a441;font-size:11px;margin-top:4px;text-align:left;line-height:1.45">${v.avisos.map(e => '⚠ ' + esc(e)).join('<br>')}</div>` : '');
+    }
+    status.innerHTML = html;
+    if (card) { card.style.borderColor = color; card.dataset.validacion = v === 'pendiente' ? 'pendiente' : (!v ? 'sin-validador' : (v.ok ? (v.avisos.length ? 'avisos' : 'ok') : 'error')); }
+  }
+
+  function hayErroresSlots() {
+    return Object.keys(files).some(k => validaciones[k] === 'pendiente' || (validaciones[k] && validaciones[k].ok === false));
+  }
+
+  /* Panel con el resultado completo de la validación (por archivo + cruces) */
+  function panelValidacionHTML(validacion, bloqueado) {
+    if (!validacion || !window.Validador) return '';
+    const reps = [...Object.values(validacion.archivos || {}), ...(validacion.cruces ? [validacion.cruces] : [])];
+    const nErr = reps.reduce((s, r) => s + r.errores.length, 0), nAv = reps.reduce((s, r) => s + r.avisos.length, 0);
+    const filas = reps.map(r => {
+      const est = !r.ok ? '<span style="color:var(--c-red);font-weight:700">✗ Error</span>' : (r.avisos.length ? '<span style="color:#d9a441;font-weight:700">⚠ Avisos</span>' : '<span style="color:var(--c-green);font-weight:700">✓ Correcto</span>');
+      const per = r.stats.fechaFin ? `${r.stats.fechaIni && r.stats.fechaIni !== r.stats.fechaFin ? esc(r.stats.fechaIni) + ' → ' : 'al '}${esc(r.stats.fechaFin)}` : '—';
+      const msgs = [...r.errores.map(e => `<div style="color:var(--c-red)">✗ ${esc(e)}</div>`), ...r.avisos.map(e => `<div style="color:#d9a441">⚠ ${esc(e)}</div>`), ...r.info.map(e => `<div style="color:var(--c-text3)">${esc(e)}</div>`)].join('');
+      return `<tr data-val-key="${r.key}"><td><strong>${esc(r.nombre)}</strong>${r.archivo ? `<br><span class="mono" style="font-size:10px;color:var(--c-text3)">${esc(r.archivo)}</span>` : ''}</td>
+        <td>${est}</td><td class="right mono">${r.stats.filas != null ? (window.FMT ? window.FMT.number(r.stats.filas) : r.stats.filas) : '—'}</td><td class="mono" style="font-size:11px">${per}</td>
+        <td style="font-size:11px;line-height:1.5">${msgs || '<span style="color:var(--c-text3)">Sin observaciones</span>'}</td></tr>`;
+    }).join('');
+    const borde = bloqueado ? 'var(--c-red)' : (nAv ? '#d9a441' : 'var(--c-green)');
+    const titulo = bloqueado
+      ? `✗ Validación con ${nErr} error${nErr === 1 ? '' : 'es'} · no se integraron los datos`
+      : `✓ Validación correcta${nAv ? ` · ${nAv} aviso${nAv === 1 ? '' : 's'} para revisar` : ''}`;
+    const corte = !bloqueado && validacion.corteAplicado
+      ? `<div style="font-size:12px;color:var(--c-text2);margin-bottom:8px">Fecha de corte usada: <strong>${esc(validacion.corteAplicado)}</strong> (${validacion.corteOrigen === 'manual' ? 'capturada manualmente' : 'fecha de cierre común de los reportes'}).</div>` : '';
+    const pie = bloqueado ? `<div style="font-size:12px;color:var(--c-text2);margin-top:10px">Corrige los archivos marcados con ✗ (vuelve a exportarlos desde el ERP con el formato de siempre) y procesa de nuevo. No se modificó ningún dato.</div>` : '';
+    return `<div class="card mb-16" id="panel-validacion" data-estado="${bloqueado ? 'error' : (nAv ? 'avisos' : 'ok')}" style="border-left:3px solid ${borde}">
+      <div class="card-title" style="color:${bloqueado ? 'var(--c-red)' : 'var(--c-text)'}">${titulo}</div>
+      ${corte}
+      <div class="tbl-wrap"><table class="data-table"><thead><tr><th>Archivo</th><th>Estado</th><th class="right">Renglones</th><th>Período</th><th>Detalle</th></tr></thead><tbody>${filas}</tbody></table></div>
+      ${pie}
+    </div>`;
   }
 
   /* Habilita "Procesar" en dos escenarios:
@@ -136,15 +212,22 @@ window.PageActualizar = (function() {
                       window.CEDI_DATA && Array.isArray(window.CEDI_DATA.articulos) && window.CEDI_DATA.articulos.length > 0;
     modoSoloVazlo = soloVazlo && !allLoaded;
 
+    const conErrores = hayErroresSlots();
     const btn = document.getElementById('btn-procesar');
     if (btn) {
-      btn.disabled = !(allLoaded || soloVazlo);
+      btn.disabled = !(allLoaded || soloVazlo) || conErrores;
       btn.textContent = labelProcesar();
     }
     // Hint contextual bajo los botones
     const status = document.getElementById('proceso-status');
     if (status && !resultado) {
-      if (modoSoloVazlo) {
+      const pend = Object.keys(files).some(k => validaciones[k] === 'pendiente');
+      const malos = Object.keys(files).filter(k => validaciones[k] && validaciones[k].ok === false);
+      if (malos.length) {
+        status.innerHTML = `<div class="card mb-16" id="aviso-slots-error" style="border-left:3px solid var(--c-red)"><div style="font-size:12px;color:var(--c-text2)">✗ <strong>${malos.length} archivo${malos.length === 1 ? '' : 's'} con error</strong> (${malos.map(k => esc(window.Validador.NOMBRES[k] || k)).join(', ')}). Revisa el detalle en la casilla, corrige y vuelve a seleccionarlo. No se puede procesar mientras haya errores.</div></div>`;
+      } else if (pend) {
+        status.innerHTML = '';
+      } else if (modoSoloVazlo) {
         status.innerHTML = `<div class="card mb-16" style="border-left:3px solid var(--c-accent)"><div style="font-size:12px;color:var(--c-text2)">⛁ <strong>Modo actualización rápida:</strong> se procesará SOLO la existencia del proveedor y se cruzará contra el catálogo vigente en sesión. Los demás datos (ventas, compras, inventario) no cambian.</div></div>`;
       } else if (!allLoaded && files.VAZLO && numOblig > 0) {
         status.innerHTML = `<div class="card mb-16" style="border-left:3px solid #d9a441"><div style="font-size:12px;color:var(--c-text2)">Para procesar necesitas <strong>los 5 archivos obligatorios completos</strong>, o bien <strong>únicamente</strong> el de existencia Vazlo (quita los demás para usar la actualización rápida).</div></div>`;
@@ -170,12 +253,19 @@ window.PageActualizar = (function() {
       } else {
         const corteEl = document.getElementById('fecha-corte');
         const corte = corteEl && corteEl.value ? corteEl.value : null;
-        const { dataset, counts } = await window.DataProcessor.processFiles(files, corte);
+        const { dataset, counts, validacion } = await window.DataProcessor.processFiles(files, corte);
         resultado = dataset;
-        renderPreview(dataset, counts);
+        renderPreview(dataset, counts, validacion);
       }
       if (status) status.innerHTML = '';
     } catch (e) {
+      resultado = null;
+      const preview = document.getElementById('preview-resultado');
+      if (preview) preview.innerHTML = '';
+      if (e && e.validacion) {
+        if (status) status.innerHTML = panelValidacionHTML(e.validacion, true);
+        return;
+      }
       console.error('Error procesando:', e);
       if (status) status.innerHTML = `<div class="card mb-16" style="border-left:3px solid var(--c-red)"><div class="card-title" style="color:var(--c-red)">Error al procesar</div><div style="font-size:13px;color:var(--c-text2)">${e.message}<br><br>Verifica que los archivos tengan el mismo formato que los originales (mismas columnas y estructura).</div></div>`;
     } finally {
@@ -190,6 +280,10 @@ window.PageActualizar = (function() {
   async function procesarSoloVazlo() {
     const f = files.VAZLO;
     if (!f) throw new Error('No hay archivo de existencia Vazlo seleccionado.');
+    if (window.DataProcessor.validarArchivoFile && window.Validador) {
+      const rv = await window.DataProcessor.validarArchivoFile('VAZLO', f);
+      if (rv && !rv.ok) { const err = new Error('Archivo Vazlo con errores'); err.validacion = { archivos: { VAZLO: rv } }; throw err; }
+    }
     const parsedV = await window.DataProcessor.parseVazloFile(f);
     if (!parsedV.filas) {
       throw new Error('No se detectaron claves con existencia en el archivo del proveedor. Verifica que tenga columnas de clave y existencia.');
@@ -271,7 +365,7 @@ window.PageActualizar = (function() {
     </div>`;
   }
 
-  function renderPreview(d, counts) {
+  function renderPreview(d, counts, validacion) {
     const F = window.FMT;
     const k = d.kpis;
     const old = window.CEDI_DATA ? window.CEDI_DATA.kpis : null;
@@ -287,6 +381,7 @@ window.PageActualizar = (function() {
 
     const preview = document.getElementById('preview-resultado');
     preview.innerHTML = `
+      ${panelValidacionHTML(validacion, false)}
       <div class="result-panel mb-16">
         <div class="rp-label">Dataset procesado correctamente · Período detectado: ${d.meta.periodo}</div>
         <div class="rp-value" style="font-size:24px">${d.meta.dias_periodo} días · ${d.meta.num_meses} meses</div>
@@ -489,5 +584,6 @@ window.PageActualizar = (function() {
     });
   }
 
-  return { render };
+  // setFile se expone para pruebas automatizadas (equivale a seleccionar el archivo en la casilla)
+  return { render, setFile, _estado: () => ({ files: Object.keys(files), validaciones, resultado }) };
 })();

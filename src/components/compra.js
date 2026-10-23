@@ -9,6 +9,24 @@ window.PageCompra = (function() {
   let sortField = 'score';
   let sortDir = -1;
 
+  /* ─── Límites del presupuesto (única fuente de verdad) ───
+     El slider, la caja de monto exacto, las etiquetas min/max y la
+     validación usan estos valores. Para subir/bajar el tope solo se
+     cambia aquí. El motor (calculations.js) no tiene tope propio.  */
+  const LIM_PRES = { min: 50000, max: 2000000, step: 10000 };
+
+  /* Normaliza cualquier entrada (texto, NaN, negativos, fuera de rango)
+     a un entero de pesos dentro de [min, max]. */
+  function sanearPresupuesto(v, fallback) {
+    const txt = String(v == null ? '' : v).replace(/[^0-9.\-]/g, '');
+    const n = Math.round(Number(txt));
+    // Vacío o no numérico → se conserva el valor vigente (o el default).
+    if (txt === '' || !Number.isFinite(n)) return fallback != null ? fallback : defaults.presupuesto;
+    return Math.min(LIM_PRES.max, Math.max(LIM_PRES.min, n));
+  }
+  const fmtPres = v => '$' + Math.round(v).toLocaleString('es-MX');
+  const etiquetaLim = v => v >= 1e6 ? '$' + (v / 1e6).toLocaleString('es-MX', { maximumFractionDigits: 1 }) + 'M' : '$' + Math.round(v / 1e3) + 'K';
+
   const defaults = {
     presupuesto: 700000,
     leadTime: 5,
@@ -139,40 +157,41 @@ window.PageCompra = (function() {
           <div class="control-grid">
             <div class="control-group">
               <div class="control-label">Presupuesto semanal</div>
-              <div class="control-value" id="val-presupuesto">$700,000</div>
+              <div class="control-value" id="val-presupuesto">${fmtPres(params.presupuesto)}</div>
               <div class="slider-wrap">
-                <span class="slider-min">$50K</span>
-                <input type="range" id="sl-presupuesto" min="50000" max="1000000" step="10000" value="700000" />
-                <span class="slider-max">$1M</span>
+                <span class="slider-min">${etiquetaLim(LIM_PRES.min)}</span>
+                <input type="range" id="sl-presupuesto" min="${LIM_PRES.min}" max="${LIM_PRES.max}" step="${LIM_PRES.step}" value="${params.presupuesto}" />
+                <span class="slider-max">${etiquetaLim(LIM_PRES.max)}</span>
               </div>
+              <label style="font-size:11px;color:var(--c-text3);display:flex;align-items:center;gap:6px">
+                Monto exacto $
+                <input type="number" id="in-presupuesto" min="${LIM_PRES.min}" max="${LIM_PRES.max}" step="1000" value="${params.presupuesto}" style="width:120px;font-size:12px;padding:4px 6px" />
+              </label>
             </div>
             <div class="control-group">
               <div class="control-label">Días de cobertura objetivo</div>
-              <div class="control-value" id="val-cobertura">30 días</div>
+              <div class="control-value" id="val-cobertura">${params.diasCoberturaMeta} días</div>
               <div class="slider-wrap">
                 <span class="slider-min">7d</span>
-                <input type="range" id="sl-cobertura" min="7" max="60" step="1" value="30" />
+                <input type="range" id="sl-cobertura" min="7" max="60" step="1" value="${params.diasCoberturaMeta}" />
                 <span class="slider-max">60d</span>
               </div>
             </div>
             <div class="control-group">
               <div class="control-label">Factor stock de seguridad</div>
-              <div class="control-value" id="val-ss">1.0×</div>
+              <div class="control-value" id="val-ss">${Number(params.factorSS).toFixed(1)}×</div>
               <div class="slider-wrap">
                 <span class="slider-min">0.5×</span>
-                <input type="range" id="sl-ss" min="0.5" max="2.0" step="0.1" value="1.0" />
+                <input type="range" id="sl-ss" min="0.5" max="2.0" step="0.1" value="${params.factorSS}" />
                 <span class="slider-max">2.0×</span>
               </div>
             </div>
             <div class="control-group">
               <div class="control-label">Lead time del proveedor</div>
               <div class="lt-buttons" id="lt-buttons">
-                <button class="lt-btn" data-lt="3">3 días</button>
-                <button class="lt-btn active" data-lt="5">5 días</button>
-                <button class="lt-btn" data-lt="9">9 días</button>
-                <button class="lt-btn" data-lt="15">15 días</button>
+                ${[3, 5, 9, 15].map(lt => `<button class="lt-btn ${params.leadTime === lt ? 'active' : ''}" data-lt="${lt}">${lt} días</button>`).join('\n                ')}
               </div>
-              <div style="font-size:11px;color:var(--c-text3);margin-top:6px" id="lt-factor-label">Factor multiplicador: ×1.00 (base)</div>
+              <div style="font-size:11px;color:var(--c-text3);margin-top:6px" id="lt-factor-label">${ltFactorTexto(params.leadTime)}</div>
             </div>
           </div>
 
@@ -180,16 +199,13 @@ window.PageCompra = (function() {
             <div class="control-group" style="flex:1;min-width:160px">
               <div class="control-label">Filtro ABC</div>
               <div style="display:flex;gap:6px;margin-top:4px">
-                <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="abc-A" checked> <span class="badge badge-A">A</span></label>
-                <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="abc-B" checked> <span class="badge badge-B">B</span></label>
-                <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="abc-C"> <span class="badge badge-C">C</span></label>
-                <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="abc-D"> <span class="badge badge-D">D</span></label>
+                ${['A', 'B', 'C', 'D'].map(c => `<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="abc-${c}" ${(params.filtroABC || []).includes(c) ? 'checked' : ''}> <span class="badge badge-${c}">${c}</span></label>`).join('\n                ')}
               </div>
             </div>
             <div class="control-group" style="flex:1;min-width:160px">
               <div class="control-label">Opciones</div>
               <label style="font-size:12px;display:flex;align-items:center;gap:6px;margin-top:6px;cursor:pointer">
-                <input type="checkbox" id="opt-demanda" checked> Solo artículos con demanda activa
+                <input type="checkbox" id="opt-demanda" ${params.soloConDemanda ? 'checked' : ''}> Solo artículos con demanda activa
               </label>
             </div>
           </div>
@@ -491,9 +507,30 @@ window.PageCompra = (function() {
     attachVazloEvents();
     attachBlindajeEvents();
 
+    // Presupuesto: slider (pasos de $10K) + caja de monto exacto, sincronizados
+    // y siempre saneados a [LIM_PRES.min, LIM_PRES.max].
+    const slPres = document.getElementById('sl-presupuesto');
+    const inPres = document.getElementById('in-presupuesto');
+    const setPresupuesto = (v, origen) => {
+      params.presupuesto = sanearPresupuesto(v, params.presupuesto);
+      const disp = document.getElementById('val-presupuesto');
+      if (disp) disp.textContent = fmtPres(params.presupuesto);
+      if (slPres && origen !== 'slider') slPres.value = params.presupuesto;
+      if (inPres && origen !== 'input-vivo') inPres.value = params.presupuesto;
+    };
+    if (slPres) slPres.addEventListener('input', () => setPresupuesto(slPres.value, 'slider'));
+    if (inPres) {
+      // Mientras se escribe solo se actualiza si el número ya es válido y está en rango;
+      // al salir del campo / Enter se sanea (tope, mínimo, no numérico).
+      inPres.addEventListener('input', () => {
+        const n = Number(inPres.value);
+        if (inPres.value !== '' && Number.isFinite(n) && n >= LIM_PRES.min && n <= LIM_PRES.max) setPresupuesto(n, 'input-vivo');
+      });
+      inPres.addEventListener('change', () => setPresupuesto(inPres.value, 'input'));
+    }
+
     // Sliders
     const sliders = [
-      { id: 'sl-presupuesto', display: 'val-presupuesto', fmt: v => '$' + parseInt(v).toLocaleString('es-MX'), key: 'presupuesto' },
       { id: 'sl-cobertura', display: 'val-cobertura', fmt: v => v + ' días', key: 'diasCoberturaMeta' },
       { id: 'sl-ss', display: 'val-ss', fmt: v => parseFloat(v).toFixed(1) + '×', key: 'factorSS' }
     ];
@@ -516,12 +553,8 @@ window.PageCompra = (function() {
         document.querySelectorAll('#lt-buttons .lt-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         params.leadTime = parseInt(btn.dataset.lt);
-        const factor = window.CALC.factorLeadTime(params.leadTime);
         const label = document.getElementById('lt-factor-label');
-        if (label) {
-          const desc = factor < 1 ? '(reducción de stock)' : factor === 1 ? '(base)' : '(incremento de stock)';
-          label.textContent = `Factor multiplicador: ×${factor.toFixed(2)} ${desc}`;
-        }
+        if (label) label.textContent = ltFactorTexto(params.leadTime);
       });
     });
 
@@ -564,6 +597,12 @@ window.PageCompra = (function() {
     });
   }
 
+  function ltFactorTexto(lt) {
+    const factor = window.CALC.factorLeadTime(lt);
+    const desc = factor < 1 ? '(reducción de stock)' : factor === 1 ? '(base)' : '(incremento de stock)';
+    return `Factor multiplicador: ×${factor.toFixed(2)} ${desc}`;
+  }
+
   function updateFiltroABC() {
     params.filtroABC = ['A','B','C','D'].filter(cat => {
       const el = document.getElementById('abc-' + cat);
@@ -577,6 +616,8 @@ window.PageCompra = (function() {
     const F = window.FMT;
 
     updateFiltroABC();
+    // El presupuesto que entra al motor siempre es un entero válido dentro del rango.
+    params.presupuesto = sanearPresupuesto(params.presupuesto);
 
     // Blindaje: si el dataset en sesión ya no trae dato Vazlo, desactivar el modo
     if (params.usarVazlo && !vazloDisponible()) {
@@ -669,6 +710,20 @@ window.PageCompra = (function() {
         </div>`;
     }
 
+    // Presupuesto mayor que la necesidad: el presupuesto es un TOPE, no una meta.
+    // Si todos los candidatos quedaron financiados y sobra dinero, se avisa
+    // qué parámetros amplían la necesidad (no se inventa compra para llenarlo).
+    const fueraTot = result.tramos ? result.tramos.reduce((s, t) => s + t.fueraArts, 0)
+      : (result.diagnostico ? Object.values(result.diagnostico.porClave).filter(e => e.estado === 'fuera_presupuesto').length : 0);
+    let sobranteBlock = '';
+    if (fueraTot === 0 && result.presupuestoRestante >= 1000) {
+      sobranteBlock = `
+        <div id="aviso-sobrante" style="margin-top:12px;padding:8px 10px;border:1px solid #d9a441;border-radius:6px;font-size:11px;line-height:1.5;color:#d9a441">
+          ⚠ La necesidad calculada (${F.compact(result.necesidadTotal || result.totalCosto)}) es menor que el presupuesto: se financió todo y sobran ${F.compact(result.presupuestoRestante)}.
+          Para que el robot use más presupuesto amplía la necesidad: más días de cobertura, factor de stock de seguridad, clase C en el filtro ABC${result.limitarVazlo ? ' o quita el tope al stock Vazlo' : ''}.
+        </div>`;
+    }
+
     panel.innerHTML = `
       <div class="result-panel">
         <div class="rp-label">Pedido óptimo calculado · Motor ${result.motor === 'pulido' ? 'pulido' : 'clásico'} · Lead time ${params.leadTime} días · Factor ×${flt.toFixed(2)}${result.blindaje ? ' · Blindaje activo' : ''}${result.usarVazlo ? ' · Existencia Vazlo activa' : ''}</div>
@@ -680,6 +735,7 @@ window.PageCompra = (function() {
           <div><div class="rp-item-label">Cobertura objetivo</div><div class="rp-item-val">${params.diasCoberturaMeta} días</div></div>
         </div>
         <div style="margin-top:14px;display:flex;gap:6px;flex-wrap:wrap">${abcRows}</div>
+        ${sobranteBlock}
         ${blindajeBlock}
         ${vazloBlock}
       </div>`;
@@ -965,5 +1021,6 @@ window.PageCompra = (function() {
     XLSX.writeFile(wb, `Pedido_CEDI_${new Date().toISOString().slice(0,10)}.xlsx`);
   }
 
-  return { render, goPage };
+  // LIM_PRES y estado() se exponen para pruebas/diagnóstico (solo lectura).
+  return { render, goPage, LIM_PRES, sanearPresupuesto, estado: () => ({ ...params }) };
 })();
